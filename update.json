@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "1.5.2",
-  "url": "https://github.com/xamtro/agoda-today-notifier/releases/download/v1.5.2/Agoda-Checkin-Hom-Nay-1.5.2.exe",
-  "sha256": "bdca4e47bf7147a7ac4c12a86014c12c918ec5ff22831764214d50e6c367b083",
-  "size": 23378162,
-  "notes": "Sua Agoda CONFIRMED co Cancellation Policy, quet lai booking bi bo lo va ghi log khoi dong/dung app."
+  "version": "1.5.3",
+  "url": "https://github.com/xamtro/agoda-today-notifier/releases/download/v1.5.3/Agoda-Checkin-Hom-Nay-1.5.3.exe",
+  "sha256": "0fec95fb12548e8e610c9c0e574a1d2cceb9fb9c0b63309c4f5c62b86547838d",
+  "size": 23379082,
+  "notes": "Them menu chuot phai Chep thong tin trong Lich su canh bao, dinh dang Excel giong popup."
 }
