@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "1.5.3",
-  "url": "https://github.com/xamtro/agoda-today-notifier/releases/download/v1.5.3/Agoda-Checkin-Hom-Nay-1.5.3.exe",
-  "sha256": "0fec95fb12548e8e610c9c0e574a1d2cceb9fb9c0b63309c4f5c62b86547838d",
-  "size": 23379082,
-  "notes": "Them menu chuot phai Chep thong tin trong Lich su canh bao, dinh dang Excel giong popup."
+  "version": "1.5.4",
+  "url": "https://github.com/xamtro/agoda-today-notifier/releases/download/v1.5.4/Agoda-Checkin-Hom-Nay-1.5.4.exe",
+  "sha256": "11a38fabe20011f961d7ddfd28be3bf9d820b978ac52390fe0830716cb4a9686",
+  "size": 24417972,
+  "notes": "Giao dien moi hien dai, tuoi sang va de doc hon; them cuon trang Cai dat de dung tot tren man hinh nho."
 }
