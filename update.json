@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "1.5.4",
-  "url": "https://github.com/xamtro/agoda-today-notifier/releases/download/v1.5.4/Agoda-Checkin-Hom-Nay-1.5.4.exe",
-  "sha256": "11a38fabe20011f961d7ddfd28be3bf9d820b978ac52390fe0830716cb4a9686",
-  "size": 24417972,
-  "notes": "Giao dien moi hien dai, tuoi sang va de doc hon; them cuon trang Cai dat de dung tot tren man hinh nho."
+  "version": "1.5.5",
+  "url": "https://github.com/xamtro/agoda-today-notifier/releases/download/v1.5.5/Agoda-Checkin-Hom-Nay-1.5.5.exe",
+  "sha256": "815dbea524d8fa4094ef86a8489a9a935204bcf9049e7e754e6085e4b6ef22f9",
+  "size": 24419040,
+  "notes": "Sua ten khach va hang phong trong email Agoda mau rut gon; giu so luong nhieu phong; sua thong tin lich su khi quet lai email, khong bao lap."
 }
