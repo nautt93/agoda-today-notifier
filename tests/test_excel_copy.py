@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from app import excel_tsv, excel_tsv_rows
+from booking_notifier.excel_export import excel_amount_value
 from booking_notifier.models import BookingEvent
 
 
@@ -23,7 +24,32 @@ def test_excel_row_keeps_nine_columns_and_blocks_formula_injection():
     columns = excel_tsv(booking("123456789", "=HYPERLINK(\"bad\")")).split("\t")
     assert len(columns) == 9
     assert columns[1].startswith("'=")
-    assert columns[3:6] == ["30/09/2026", "02/10/2026", "2"]
+    assert columns[0] == ""
+    assert columns[2:6] == ["30", "2", "2", "1800000"]
+    assert columns[6:] == ["", "", "Expedia Deluxe King"]
+
+
+def test_agoda_exact_legacy_layout():
+    alert = booking("123456789", "NGUYEN VAN AN")
+    alert.source = "Agoda"
+    alert.total_revenue = "VND 1,031,040.00"
+    assert excel_tsv(alert) == "\tNGUYEN VAN AN\t30\t2\t2\t1031040\t\t\tAgoda Deluxe King"
+    alert.room_type = "Agoda Deluxe King"
+    assert excel_tsv(alert).endswith("\tAgoda Deluxe King")
+
+
+def test_excel_whitespace_and_missing_fields():
+    alert = booking("123", "  \t=SUM(1)\n ")
+    alert.checkout_date = None
+    alert.room_type = ""
+    alert.total_revenue = ""
+    assert excel_tsv(alert) == "\t'=SUM(1)\t30\t\t\t\t\t\tExpedia"
+
+
+def test_legacy_amounts():
+    for value, expected in (("VND 1.800.000,00", "1800000"), ("USD 1,234.50", "1234.50"),
+                            ("431 568 ₫", "431568"), ("N/A", ""), ("=SUM(A1)", "1")):
+        assert excel_amount_value(value) == expected
 
 
 def test_multiple_bookings_copy_as_multiple_excel_rows():

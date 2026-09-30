@@ -20,6 +20,7 @@ from booking_notifier.config import (
     PROVIDERS,
     ConfigStore,
 )
+from booking_notifier.excel_export import excel_tsv, excel_tsv_rows  # noqa: F401 (public compatibility)
 from booking_notifier.f92_device import F92Worker
 from booking_notifier.mail_monitor import ImapMonitor, is_quiet_hours, test_imap_connection
 from booking_notifier.models import BookingEvent
@@ -27,6 +28,7 @@ from booking_notifier.ota_update import (
     check_for_update,
     download_update,
     launch_self_update,
+    report_update_startup,
     run_update_helper_from_argv,
 )
 from booking_notifier.security import protect_secret, unprotect_secret
@@ -90,33 +92,6 @@ def set_start_with_windows(enabled: bool) -> None:
                 pass
 
 
-def excel_tsv(alert: BookingEvent) -> str:
-    def safe(value: object) -> str:
-        text = str(value or "").replace("\t", " ").replace("\r", " ").replace("\n", " ")
-        if text.startswith(("=", "+", "-", "@")):
-            text = "'" + text
-        return text
-
-    checkin = alert.checkin_date.strftime("%d/%m/%Y") if alert.checkin_date else ""
-    checkout = alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else ""
-    values = (
-        alert.booking_id,
-        alert.guest_name,
-        alert.room_type,
-        checkin,
-        checkout,
-        alert.nights if alert.nights is not None else "",
-        alert.total_revenue,
-        alert.source,
-        alert.subject,
-    )
-    return "\t".join(safe(value) for value in values)
-
-
-def excel_tsv_rows(alerts: list[BookingEvent]) -> str:
-    return "\r\n".join(excel_tsv(alert) for alert in alerts)
-
-
 class BookingNotifierApp:
     COLORS = {
         "bg": "#F5F2EC",
@@ -154,6 +129,8 @@ class BookingNotifierApp:
         self.active_popup: tk.Toplevel | None = None
         self.queued_ids: set[str] = set()
         self.sound_active = False
+        self.closing = False
+        self.update_busy = False
         self.f92_clock_job: str | None = None
         self._build_styles()
         self._build_ui()
@@ -654,6 +631,8 @@ class BookingNotifierApp:
         threading.Thread(target=worker, name="UpdateCheck", daemon=True).start()
 
     def _offer_update(self, info: Any) -> None:
+        if self.update_busy:
+            return
         if not messagebox.askyesno(
             "Có bản cập nhật",
             f"Phiên bản {info.version} đã sẵn sàng.\n\n{info.notes}\n\nTải và cài đặt ngay?",
@@ -661,22 +640,28 @@ class BookingNotifierApp:
         ):
             return
         self.set_status("Đang tải bản cập nhật đã ký…")
+        self.update_busy = True
 
         def worker() -> None:
             try:
                 downloaded = download_update(info)
                 self.events.put(("update_downloaded", (info, downloaded)))
             except Exception as exc:
-                self.events.put(("error", f"Không tải được cập nhật: {exc}"))
+                self.events.put(("update_failed", f"Không tải được cập nhật: {exc}"))
 
         threading.Thread(target=worker, name="UpdateDownload", daemon=True).start()
 
     def _install_update(self, info: Any, downloaded: Path) -> None:
-        try:
-            launch_self_update(downloaded, Path(sys.executable), info.sha256)
-            self.exit_app()
-        except Exception as exc:
-            messagebox.showerror("Không cài được cập nhật", str(exc), parent=self.root)
+        self.set_status("Đang chuẩn bị cài đặt; ứng dụng sẽ tự mở lại…")
+
+        def worker() -> None:
+            try:
+                launch_self_update(downloaded, Path(sys.executable), info.sha256)
+                self.events.put(("update_ready", None))
+            except Exception as exc:
+                self.events.put(("update_failed", str(exc)))
+
+        threading.Thread(target=worker, name="UpdatePrepare", daemon=True).start()
 
     def _drain_events(self) -> None:
         try:
@@ -720,6 +705,14 @@ class BookingNotifierApp:
                         messagebox.showinfo("Cập nhật", "Bạn đang dùng phiên bản mới nhất.", parent=self.root)
                 elif event_type == "update_downloaded":
                     self._install_update(*payload)
+                elif event_type == "update_ready":
+                    self.exit_app()
+                    return
+                elif event_type == "update_failed":
+                    self.update_busy = False
+                    self.log(f"Lỗi cập nhật: {payload}")
+                    self.set_status("Cập nhật chưa thành công; ứng dụng vẫn đang chạy")
+                    messagebox.showerror("Không cài được cập nhật", str(payload), parent=self.root)
                 elif event_type == "restart_ready":
                     self._start_monitor_generation(*payload)
         except queue.Empty:
@@ -728,7 +721,8 @@ class BookingNotifierApp:
             LOGGER.exception("UI event failed; keeping notification loop alive")
             self.set_status("Lỗi hiển thị – xem Nhật ký; ứng dụng sẽ tiếp tục thử")
         finally:
-            self.root.after(180, self._drain_events)
+            if not self.closing:
+                self.root.after(180, self._drain_events)
 
     def _minute_tick(self) -> None:
         try:
@@ -897,7 +891,7 @@ class BookingNotifierApp:
             if index < len(rows) - 1:
                 tk.Frame(info_card, bg="#E8E2D8", height=1).pack(fill="x", pady=(2, 0))
 
-        self.copy_feedback_var = tk.StringVar(value="Chuột phải hoặc Ctrl+C để sao chép 9 cột sang Excel")
+        self.copy_feedback_var = tk.StringVar(value="Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
         tk.Label(
             body, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
             font=("Segoe UI", 9),
@@ -1058,6 +1052,9 @@ class BookingNotifierApp:
         self.log("Ứng dụng vẫn chạy nền. Mở lại từ Taskbar và bấm Thoát để kết thúc.")
 
     def exit_app(self) -> None:
+        if self.closing:
+            return
+        self.closing = True
         if self.f92_clock_job is not None:
             self.root.after_cancel(self.f92_clock_job)
         self.monitor_generation += 1
@@ -1083,6 +1080,8 @@ def main() -> int:
     try:
         root = tk.Tk()
         app = BookingNotifierApp(root)
+        root.update_idletasks()
+        report_update_startup(sys.argv)
         # A real Exit command remains accessible even when the close button minimizes.
         root.bind("<Control-Shift-Q>", lambda _event: app.exit_app())
         root.mainloop()

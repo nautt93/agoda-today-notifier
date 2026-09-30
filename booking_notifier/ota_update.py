@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -22,7 +23,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 MAX_MANIFEST_BYTES = 1_000_000
 MAX_UPDATE_BYTES = 300_000_000
-USER_AGENT = "BookingDesk-Updater/1.7.2"
+USER_AGENT = "BookingDesk-Updater/1.7.3"
 UPDATE_PUBLIC_KEY_B64 = "MfTQyUTsvyFEk2ybaktEjB26OsNYQLVVM/4dWRo6RO8="
 VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+]([0-9A-Za-z.-]+))?$")
 
@@ -232,59 +233,128 @@ def download_update(
 def _wait_for_process(parent_pid: int, timeout_seconds: float = 60.0) -> None:
     if os.name != "nt" or parent_pid <= 0:
         return
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel.CloseHandle.restype = wintypes.BOOL
+    handle = kernel.OpenProcess(0x100000, False, parent_pid)  # SYNCHRONIZE
+    if not handle:
+        if ctypes.get_last_error() == 87:  # PID no longer exists.
+            return
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        result = kernel.WaitForSingleObject(handle, int(timeout_seconds * 1000))
+        if result == 258:
+            raise TimeoutError("Ứng dụng cũ chưa đóng; chưa thay thế tệp chương trình.")
+        if result != 0:
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def _replace_with_retry(source: Path, target: Path, timeout_seconds: float = 15.0) -> None:
+    # The onefile bootloader / antivirus can hold the EXE briefly after Python exits.
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
+
+
+def _launch_independent(argv: list[str]) -> subprocess.Popen:
+    return subprocess.Popen(
+        argv, close_fds=True,
+        env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"},
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def _wait_for_marker(process: subprocess.Popen, marker: Path, timeout_seconds: float = 60.0) -> None:
     deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
-        try:
-            handle = ctypes.windll.kernel32.OpenProcess(0x100000, False, parent_pid)  # type: ignore[name-defined]
-        except Exception:
+        if marker.is_file():
             return
-        if not handle:
-            return
-        ctypes.windll.kernel32.CloseHandle(handle)  # type: ignore[name-defined]
-        time.sleep(0.3)
-    raise TimeoutError("Ứng dụng cũ chưa đóng sau 60 giây.")
+        if process.poll() is not None:
+            raise RuntimeError(f"Tiến trình cập nhật/ứng dụng đã thoát (mã {process.returncode}).")
+        time.sleep(0.1)
+    raise TimeoutError("Chưa nhận được xác nhận khởi động sau 60 giây.")
 
 
-def apply_update_files(source_exe: Path, target_exe: Path, expected_sha256: str, parent_pid: int = 0) -> None:
+def report_update_startup(argv: list[str]) -> None:
+    """Called only after the new app has built its UI and owns the single-instance lock."""
+    if "--update-started" in argv:
+        marker = Path(argv[argv.index("--update-started") + 1])
+        marker.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def apply_update_files(
+    source_exe: Path, target_exe: Path, expected_sha256: str, parent_pid: int = 0,
+    ready_file: Path | None = None,
+) -> None:
     validate_update_executable(source_exe, expected_sha256)
-    _wait_for_process(parent_pid)
-    temporary = target_exe.with_suffix(target_exe.suffix + ".update.tmp")
+    if source_exe.resolve() == target_exe.resolve():
+        raise ValueError("Tệp tải về phải khác tệp ứng dụng đang chạy.")
+    descriptor, staging = tempfile.mkstemp(prefix=target_exe.name + ".", suffix=".update.tmp", dir=target_exe.parent)
+    os.close(descriptor)
+    temporary = Path(staging)
     backup = target_exe.with_suffix(target_exe.suffix + ".previous")
-    temporary.unlink(missing_ok=True)
-    shutil.copy2(source_exe, temporary)
-    validate_update_executable(temporary, expected_sha256)
+    startup_marker = temporary.with_suffix(".started")
+    replaced = False
+    process = None
     try:
+        # Validate the staged copy AND destination write access before asking the old app to exit.
+        shutil.copy2(source_exe, temporary)
+        validate_update_executable(temporary, expected_sha256)
+        if ready_file is not None:
+            ready_file.write_text("ready", encoding="utf-8")
+        _wait_for_process(parent_pid)
         backup.unlink(missing_ok=True)
         if target_exe.exists():
-            os.replace(target_exe, backup)
-        os.replace(temporary, target_exe)
-        subprocess.Popen([str(target_exe)], close_fds=True)
-        backup.unlink(missing_ok=True)
+            _replace_with_retry(target_exe, backup)
+        replaced = True
+        _replace_with_retry(temporary, target_exe)
+        process = _launch_independent([str(target_exe), "--update-started", str(startup_marker)])
+        _wait_for_marker(process, startup_marker)
     except Exception:
-        temporary.unlink(missing_ok=True)
-        if backup.exists():
-            os.replace(backup, target_exe)
-        if target_exe.exists():
-            try:
-                subprocess.Popen([str(target_exe)], close_fds=True)
-            except Exception:
-                pass
+        # Do not overwrite a new instance that may still be running but has not signalled yet.
+        if replaced and (process is None or process.poll() is not None):
+            if backup.exists():
+                _replace_with_retry(backup, target_exe)
+                _launch_independent([str(target_exe)])
         raise
+    else:
+        try:
+            backup.unlink(missing_ok=True)
+        except OSError:
+            pass  # A leftover recovery copy must not roll back a working application.
+    finally:
+        temporary.unlink(missing_ok=True)
+        startup_marker.unlink(missing_ok=True)
 
 
 def launch_self_update(downloaded_exe: Path, current_exe: Path, expected_sha256: str) -> subprocess.Popen:
     validate_update_executable(downloaded_exe, expected_sha256)
     if not getattr(sys, "frozen", False):
         raise RuntimeError("Chỉ có thể tự cập nhật khi chạy bản EXE đã đóng gói.")
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-    return subprocess.Popen(
-        [
+    with tempfile.TemporaryDirectory(prefix="booking-update-ready-") as directory:
+        ready = Path(directory) / "ready"
+        process = _launch_independent([
             str(downloaded_exe), "--apply-update", "--parent-pid", str(os.getpid()),
             "--target", str(current_exe), "--sha256", expected_sha256,
-        ],
-        creationflags=flags,
-        close_fds=True,
-    )
+            "--helper-ready", str(ready),
+        ])
+        _wait_for_marker(process, ready)
+        return process
 
 
 def run_update_helper_from_argv(argv: list[str]) -> int | None:
@@ -295,17 +365,22 @@ def run_update_helper_from_argv(argv: list[str]) -> int | None:
     parser.add_argument("--parent-pid", type=int, required=True)
     parser.add_argument("--target", required=True)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--helper-ready")
     args, _ = parser.parse_known_args(argv[1:])
     try:
-        apply_update_files(Path(argv[0]), Path(args.target), args.sha256, args.parent_pid)
+        source = Path(sys.executable) if getattr(sys, "frozen", False) else Path(argv[0])
+        apply_update_files(source, Path(args.target), args.sha256, args.parent_pid,
+                           Path(args.helper_ready) if args.helper_ready else None)
         return 0
     except Exception as exc:
         log_path = Path(os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()) / "AgodaTodayNotifier" / "update-error.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {exc}\n", encoding="utf-8")
+        log_path.write_text(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\n{traceback.format_exc()}\n", encoding="utf-8")
+        if os.name == "nt":
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(
+                None, f"Không hoàn tất cập nhật: {exc}\n\nChi tiết: {log_path}\n"
+                "Hãy mở lại ứng dụng hoặc tải bản mới trực tiếp từ GitHub.", "Lỗi cập nhật Booking Desk", 0x10,
+            )
         return 2
-
-
-# Imported lazily on non-Windows platforms so test discovery remains portable.
-if os.name == "nt":
-    import ctypes
