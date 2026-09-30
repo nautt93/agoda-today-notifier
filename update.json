@@ -1,8 +1,9 @@
 {
   "schema": 1,
-  "version": "1.5.5",
-  "url": "https://github.com/xamtro/agoda-today-notifier/releases/download/v1.5.5/Agoda-Checkin-Hom-Nay-1.5.5.exe",
-  "sha256": "815dbea524d8fa4094ef86a8489a9a935204bcf9049e7e754e6085e4b6ef22f9",
-  "size": 24419040,
-  "notes": "Sua ten khach va hang phong trong email Agoda mau rut gon; giu so luong nhieu phong; sua thong tin lich su khi quet lai email, khong bao lap."
+  "version": "1.6.0",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.6.0/Booking-Checkin-Hom-Nay-1.6.0.exe",
+  "sha256": "21636cafb0ae42c1f638f855d054e894018ed9dd923309b1eb5df026f400ac3d",
+  "size": 23712122,
+  "notes": "Sửa cảnh báo booking tương lai, vòng đời Expedia, TLS IMAP, parser doanh thu và bảo mật OTA.",
+  "signature": "G/7Gxt+QIzk52KthGrZju/+dkHzY4v5CXEN5x41oGezul+8yjyOSLAJfvXn0hllx9sCa6T/zP3QOQ6EY4/c3DA=="
 }
