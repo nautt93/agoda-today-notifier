@@ -1,15 +1,16 @@
 # Booking Check-in Hôm nay
 
-Ứng dụng Windows theo dõi email xác nhận từ Agoda và Expedia Partner Central, lưu booking tương lai và cảnh báo đúng ngày khách check-in.
+Ứng dụng Windows đọc thư xác nhận mới nhất từ Agoda và Expedia Partner Central, báo ngay nếu booking check-in hôm nay, theo cơ chế bản 1.5.5.
 
 ## Tính năng
 
 - Đọc email Agoda và Expedia qua IMAP với TLS có xác minh chứng chỉ.
-- Xử lý đầy đủ booking mới, chỉnh sửa và hủy.
-- Agoda và Expedia dùng chung cơ chế: chỉ hiện cảnh báo cho booking check-in hôm nay; chỉnh sửa/hủy ngày khác được cập nhật âm thầm.
-- Lưu booking tương lai, không bỏ lỡ cảnh báo khi email đến trước ngày nhận phòng.
+- Chỉ đọc tối đa 500 thư gần nhất như bản 1.5.5; đọc thư mới trước và bỏ qua thư đã xử lý. Không tải toàn bộ hộp thư.
+- Agoda và Expedia dùng chung cơ chế: email xác nhận mới → đọc ngày check-in → nếu là hôm nay, lưu cảnh báo và hiện popup ngay trước khi đọc thư tiếp theo.
+- Booking ngày khác và thư chỉnh sửa/hủy được bỏ qua; không tự lên lịch nhắc booking tương lai từ dữ liệu cũ.
 - Phân biệt Expedia Collect và Hotel/Property Collect; ưu tiên đúng khoản tiền khách sạn thực nhận.
 - Hiển thị popup, phát âm thanh, lưu lịch sử và chép 9 cột sang Excel.
+- Phát MP3 hoặc WAV như bản cũ; tệp âm thanh/thiết bị lỗi không đóng popup booking. Giờ yên lặng 00:00–08:00 giữ cảnh báo chờ và hiện sau 08:00 nếu bật.
 - Chép Excel đúng mẫu 1.5.5: STT trống | tên khách | số ngày đến | số ngày đi | số đêm | tiền dạng số | trống | trống | nguồn + hạng phòng. Dán bắt đầu từ cột A; không chèn mã booking hoặc tiêu đề email.
 - Giao diện desktop tối–vàng cao cấp; nhấp đúp, Ctrl+C hoặc chuột phải để sao chép một/nhiều booking sang Excel.
 - Hỗ trợ màn hình/loa F92 qua USB serial.
@@ -46,8 +47,8 @@ pyinstaller --noconfirm --clean BookingNotifier.spec
 ## Kiến trúc an toàn
 
 - `booking_notifier/parsing.py`: parser và nhận diện vòng đời booking.
-- `booking_notifier/state.py`: lưu trạng thái nguyên tử, lịch booking tương lai và chống trùng.
-- `booking_notifier/mail_monitor.py`: kết nối IMAP, lọc header trước khi tải nội dung.
+- `booking_notifier/state.py`: lưu cảnh báo hôm nay và dấu email đã xử lý cùng lúc, chống trùng; giữ lịch sử khi nâng cấp.
+- `booking_notifier/mail_monitor.py`: kết nối IMAP, lấy nhóm thư mới nhất, báo booking hôm nay ngay khi đọc được.
 - `booking_notifier/ota_update.py`: xác minh chữ ký manifest, checksum và rollback.
 - `booking_notifier/f92_device.py`: giao tiếp thiết bị F92.
 - `tests/`: regression test cho các lỗi đã phát hiện ở v1.5.5.

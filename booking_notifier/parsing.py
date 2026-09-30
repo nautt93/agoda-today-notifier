@@ -28,7 +28,7 @@ CHECKIN_LABELS = (
 )
 CHECKOUT_LABELS = (
     "check-out date", "check out date", "check-out", "check out", "departure date",
-    "departure", "ngày trả phòng", "ngày đi", "trả phòng",
+    "departure", "ngày trả phòng", "ngày đi", "ngày rời đi", "trả phòng",
 )
 GUEST_LABELS = (
     "lead traveler name", "lead guest name", "primary traveler name", "primary guest name",
@@ -240,8 +240,23 @@ def sender_source(sender: str) -> str:
     return ""
 
 
-def _event_status(subject: str, body: str) -> str:
+def _event_status(subject: str, body: str, source: str = "") -> str:
     subject_n = normalized(subject)
+    if source == "Agoda":
+        # Original 1.5.5 rules: ignore cancellation/amendment notices, but do not
+        # mistake cancellation policy wording elsewhere in a confirmation for its status.
+        if re.search(r"\b(?:cancelled|canceled|cancellation|booking\s+cancel)\b|\bhuy\s+dat\s+phong\b|\bda\s+huy\b", subject_n):
+            return BOOKING_STATUS_CANCELLED
+        if re.search(r"\b(?:amended|modified|updated|changed)\b|\b(?:sua|thay\s+doi)\s+(?:booking|dat\s+phong)\b", subject_n):
+            return BOOKING_STATUS_MODIFIED
+        if re.search(
+            r"\b(?:booking|reservation)(?:\s+status)?\s*[:\-]?\s*(?:has\s+been\s+|was\s+|is\s+)?(?:cancelled|canceled)\b"
+            r"|\bnotification\s*type(?:test)?\s*[:\-]?\s*(?:booking\s*)?cancel(?:led|ed|lation)?\b"
+            r"|\b(?:booking|reservation)\s+(?:has\s+been\s+|was\s+|is\s+)?(?:da\s+)?huy\b",
+            normalized(body[:8000]),
+        ):
+            return BOOKING_STATUS_CANCELLED
+        return BOOKING_STATUS_NEW
     searchable = normalized(subject + "\n" + body[:50000])
     cancellation_patterns = (
         r"\b(?:booking|reservation)(?: status)?\s*[:\-]?\s*(?:has been |was |is )?(?:cancelled|canceled)\b",
@@ -257,6 +272,9 @@ def _event_status(subject: str, body: str) -> str:
         return BOOKING_STATUS_CANCELLED
     if re.search(r"\b(?:huy (?:dat phong|booking)|(?:dat phong|booking).*da huy)\b", subject_n):
         return BOOKING_STATUS_CANCELLED
+    # Agoda 1.5.5 rejects amendment subjects even without an adjacent 'booking' word.
+    if re.search(r"\b(?:amended|modified|updated|changed)\b|\b(?:sua|thay doi)\s+(?:booking|dat phong)\b", subject_n):
+        return BOOKING_STATUS_MODIFIED
     modification_patterns = (
         r"\b(?:booking|reservation)(?: status)?\s*[:\-]?\s*(?:has been |was |is )?(?:modified|updated|changed|amended)\b",
         r"\bnotification type\s*[:\-]?\s*(?:booking )?(?:modified|modification|amended)\b",
@@ -312,6 +330,10 @@ def parse_date(value: str, source: str = "") -> date | None:
     match = re.search(r"\b(\d{1,2})\s+thang\s+(\d{1,2})(?:\s+nam)?\s+(20\d{2})\b", raw)
     if match:
         return _safe_date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+    # This numeric, space-separated date was supported by the original Agoda reader.
+    match = re.search(r"\b(\d{1,2})\s+(?:thang\s+)?(\d{1,2})\s*,?\s*(20\d{2})\b", raw)
+    if match:
+        return _safe_date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
     return None
 
 
@@ -360,6 +382,15 @@ def _text_value(text: str, labels: Iterable[str], max_length: int = 180) -> str:
 
 
 def _date_by_labels(text: str, rows: Sequence[Sequence[str]], labels: Sequence[str], source: str) -> date | None:
+    def labelled_date(candidate: str) -> date | None:
+        # A flattened body may put checkout on the same line. Never let its date
+        # be parsed as checkin when the arrival uses a different numeric format.
+        candidate = re.split(
+            r"\b(?:check\s*[-]?\s*(?:in|out)|arrival|departure|ngay\s*(?:nhan\s*phong|tra\s*phong|den|di))\b",
+            strip_accents(candidate), maxsplit=1, flags=re.IGNORECASE,
+        )[0]
+        return parse_date(candidate, source)
+
     # A horizontal header row (Check-in | Check-out) has values BELOW each label.
     wanted = {normalized(label) for label in labels}
     date_headers = {normalized(label) for label in CHECKIN_LABELS + CHECKOUT_LABELS}
@@ -374,7 +405,7 @@ def _date_by_labels(text: str, rows: Sequence[Sequence[str]], labels: Sequence[s
             if row_index + 1 < len(rows) and column < len(rows[row_index + 1]):
                 candidates.append(rows[row_index + 1][column])
             for candidate in candidates:
-                parsed = parse_date(candidate, source)
+                parsed = labelled_date(candidate)
                 if parsed:
                     return parsed
     text = text.translate(str.maketrans({"–": "-", "‑": "-", "−": "-"}))
@@ -384,9 +415,20 @@ def _date_by_labels(text: str, rows: Sequence[Sequence[str]], labels: Sequence[s
             text,
             re.IGNORECASE,
         ):
-            parsed = parse_date(match.group(1), source)
+            parsed = labelled_date(match.group(1))
             if parsed:
                 return parsed
+    # 1.5.5 searches labels anywhere in the flattened body, not only at line starts.
+    # Keep table/line parsing first so horizontal date headings still resolve correctly.
+    flat = re.sub(r"\s+", " ", strip_accents(text)).strip()
+    patterns = "|".join(re.escape(normalized(label)).replace(r"\ ", r"\s+") for label in labels)
+    legacy_label = (r"check\s*[-]?\s*in(?:\s*date)?" if labels == CHECKIN_LABELS
+                    else r"check\s*[-]?\s*out(?:\s*date)?")
+    patterns = legacy_label + "|" + patterns
+    for match in re.finditer(rf"(?<!\w)(?:{patterns})\s*[:\-]?\s*(.{{0,140}})", flat, re.IGNORECASE):
+        parsed = labelled_date(match.group(1))
+        if parsed:
+            return parsed
     return None
 
 
@@ -738,9 +780,9 @@ def parse_booking_message(message: Message) -> BookingEvent | None:
         return None
     body = message_body_text(message)
     rows = message_table_rows(message)
-    status = _event_status(subject, body)
+    status = _event_status(subject, body, source)
     booking_id = extract_booking_id(body, subject)
-    if not booking_id:
+    if not booking_id and source != "Agoda":
         return None
     checkin = _date_by_labels(body, rows, CHECKIN_LABELS, source)
     checkout = _date_by_labels(body, rows, CHECKOUT_LABELS, source)
@@ -748,13 +790,13 @@ def parse_booking_message(message: Message) -> BookingEvent | None:
         searchable = normalized(subject + "\n" + body[:12000])
         booking_terms = (
             "new reservation", "new booking", "reservation confirmation", "booking confirmation",
-            "reservation notification", "booking notification", "confirmed reservation",
+            "reservation notification", "booking notification", "reservation details", "confirmed reservation",
             "reservation confirmed", "booking confirmed", "status confirmed", "status booked",
             "xac nhan dat phong", "dat phong moi", "thong bao dat phong",
         )
-        # The original Agoda reader accepted trusted messages with a booking ID
-        # and a labelled arrival date. Localised vouchers need no English title.
-        if not checkin or (source != "Agoda" and not any(term in searchable for term in booking_terms)):
+        agoda_terms = ("booking", "reservation", "confirmation", "dat phong", "xac nhan")
+        terms = agoda_terms if source == "Agoda" else booking_terms
+        if not checkin or not any(term in searchable for term in terms):
             return None
     received_at = str(message.get("Date", ""))
     try:

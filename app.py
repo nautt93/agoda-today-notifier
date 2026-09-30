@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
+from booking_notifier.audio import WindowsMciAudioPlayer
 from booking_notifier.config import (
     APP_DIR,
     APP_NAME,
@@ -129,6 +130,8 @@ class BookingNotifierApp:
         self.active_popup: tk.Toplevel | None = None
         self.queued_ids: set[str] = set()
         self.sound_active = False
+        self.sound_uses_file = False
+        self.mp3_player = WindowsMciAudioPlayer()
         self.closing = False
         self.update_busy = False
         self.f92_clock_job: str | None = None
@@ -536,7 +539,7 @@ class BookingNotifierApp:
         self.port_var.set(str(port))
 
     def choose_sound(self) -> None:
-        value = filedialog.askopenfilename(title="Chọn âm thanh", filetypes=[("WAV", "*.wav"), ("Tất cả", "*.*")])
+        value = filedialog.askopenfilename(title="Chọn âm thanh", filetypes=[("Âm thanh", "*.mp3 *.wav"), ("Tất cả", "*.*")])
         if value:
             self.sound_var.set(value)
 
@@ -764,6 +767,10 @@ class BookingNotifierApp:
                 self.enqueue_alert(due)
 
     def enqueue_alert(self, alert: BookingEvent) -> None:
+        if alert.checkin_date != date.today() or alert.status not in {"new", "active"}:
+            return
+        if self.quiet_var.get() and is_quiet_hours():
+            return  # Already persisted pending; the minute tick releases it after 08:00.
         if alert.storage_id in self.queued_ids:
             return
         self.queued_ids.add(alert.storage_id)
@@ -912,26 +919,46 @@ class BookingNotifierApp:
         popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
         popup.protocol("WM_DELETE_WINDOW", self.acknowledge_alert)
         self._present_alert_popup(popup)
-        self.play_sound()
-        if self.config.get("f92_enabled", True):
-            self.f92_worker.notify(alert)
+        self.log(f"POPUP {alert.source} {alert.booking_id or '(không có mã)'}: đã mở thông báo check-in hôm nay.")
+        # An audio driver/file error must never dismiss a valid booking notification.
+        try:
+            self.play_sound()
+        except Exception as exc:
+            LOGGER.exception("Booking sound failed; popup remains visible")
+            self.log(f"Không phát được âm thanh: {exc}; popup booking vẫn mở.")
+        try:
+            if self.config.get("f92_enabled", True):
+                self.f92_worker.notify(alert)
+        except Exception as exc:
+            LOGGER.exception("F92 enqueue failed; popup remains visible")
+            self.log(f"F92: {exc}; popup booking vẫn mở.")
 
     def play_sound(self) -> None:
+        self.stop_sound()
         self.sound_active = True
+        self.sound_uses_file = False
         sound = str(self.config.get("sound_file", ""))
         if os.name == "nt":
             import winsound
 
-            if sound and Path(sound).is_file():
-                winsound.PlaySound(sound, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
-            else:
+            try:
+                if sound and Path(sound).is_file():
+                    if Path(sound).suffix.lower() == ".mp3":
+                        self.mp3_player.play_loop(Path(sound))
+                    else:
+                        winsound.PlaySound(sound, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+                    self.sound_uses_file = True
+            except Exception:
+                LOGGER.exception("Cannot play configured sound; falling back to Windows beep")
+                self.log("Không phát được tệp âm thanh; đang dùng chuông Windows.")
+            if not self.sound_uses_file:
                 winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         self.root.after(3000, self._repeat_beep)
 
     def _repeat_beep(self) -> None:
         if not self.sound_active:
             return
-        if os.name == "nt" and not self.config.get("sound_file"):
+        if os.name == "nt" and not self.sound_uses_file:
             import winsound
 
             winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
@@ -942,7 +969,11 @@ class BookingNotifierApp:
         if os.name == "nt":
             import winsound
 
-            winsound.PlaySound(None, winsound.SND_PURGE)
+            try:
+                winsound.PlaySound(None, winsound.SND_PURGE)
+                self.mp3_player.stop()
+            except Exception:
+                LOGGER.exception("Cannot stop booking sound")
 
     def copy_active_alert(self) -> None:
         if not self.active_alert:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import queue
 import ssl
-from datetime import date
+from datetime import date, timedelta
 from email.message import EmailMessage
 
 import pytest
@@ -121,3 +121,125 @@ def test_agoda_email_to_pending_alert_survives_bad_email_and_deduplicates(tmp_pa
     state.acknowledge(state.pending_for_date(date.today())[0])
     assert monitor.scan_mailbox() == 0
     assert len([kind for kind, _ in events.queue if kind == "alert"]) == 1
+
+
+def recent_message(source="Agoda", arrival=None, booking_id="987654321", subject="Booking confirmation"):
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com" if source == "Agoda" else "notify@expediapartnercentral.com"
+    message["Subject"] = subject
+    message["Message-ID"] = f"<{source}-{booking_id}@example>"
+    label = "Booking ID" if source == "Agoda" else "Itinerary ID"
+    message.set_content(f"{label}: {booking_id}\nGuest Name: Jane Doe\nCheck-in: {arrival or date.today().isoformat()}")
+    return message.as_bytes()
+
+
+def fake_inbox(monkeypatch, messages, before_fetch=None):
+    fetched = []
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def login(self, *args):
+            pass
+
+        def select(self, *args, **kwargs):
+            return "OK", [str(len(messages)).encode()]
+
+        def response(self, *args):
+            return "OK", [b"123"]
+
+        def uid(self, command, *args):
+            if command == "search":
+                assert args[1] == "SINCE"
+                assert "FROM" not in args
+                return "OK", [b" ".join(str(uid).encode() for uid in messages)]
+            assert command == "fetch"
+            assert args[1] == "(BODY.PEEK[])"  # No extra header fetch/filter.
+            uid = int(args[0])
+            if before_fetch:
+                before_fetch(uid)
+            fetched.append(uid)
+            raw = messages[uid]
+            if isinstance(raw, Exception):
+                raise raw
+            return "OK", [(b"BODY[]", raw)]
+
+    monkeypatch.setattr(mail_monitor.imaplib, "IMAP4_SSL", FakeClient)
+    return fetched
+
+
+def make_monitor(tmp_path, **config):
+    state = StateStore(tmp_path / "state.json")
+    events = queue.Queue()
+    monitor = mail_monitor.ImapMonitor({
+        "imap_host": "example.com", "email_address": "hotel@example.com", "quiet_hours_enabled": False,
+        **config,
+    }, "secret", state, events)
+    return monitor, state, events
+
+
+@pytest.mark.parametrize("source", ["Agoda", "Expedia"])
+def test_alert_is_emitted_before_next_email_and_survives_connection_drop(tmp_path, monkeypatch, source):
+    monitor, state, events = make_monitor(tmp_path)
+
+    def before_fetch(uid):
+        if uid == 1:
+            assert any(kind == "alert" for kind, _ in events.queue), "Alert waited for the whole inbox"
+            assert len(StateStore(state.path).pending_for_date(date.today())) == 1
+
+    fetched = fake_inbox(monkeypatch, {
+        1: mail_monitor.imaplib.IMAP4.abort("connection dropped"), 2: recent_message(source),
+    }, before_fetch)
+    with pytest.raises(mail_monitor.imaplib.IMAP4.abort):
+        monitor.scan_mailbox()
+    assert fetched == [2, 1]
+    assert [item.source for kind, item in events.queue if kind == "alert"] == [source]
+
+
+def test_only_latest_500_are_downloaded_and_old_mail_does_not_block_new(tmp_path, monkeypatch):
+    monitor, _, _ = make_monitor(tmp_path)
+    non_booking = b"From: friend@example.com\r\nSubject: Hello\r\n\r\nHello"
+    fetched = fake_inbox(monkeypatch, {uid: non_booking for uid in range(1, 2001)})
+    monitor.scan_mailbox()
+    assert fetched == list(range(2000, 1500, -1))
+    fetched.clear()
+    monitor.scan_mailbox()
+    assert fetched == []
+
+
+def test_future_and_modified_cancelled_messages_never_create_reminders(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path)
+    future = date.today() + timedelta(days=1)
+    # Leftover bookings saved by 1.6/1.7 must not become reminders in the new-reader mode.
+    state.apply_event(BookingEvent(source="Agoda", booking_id="OLD-12345", checkin_date=date.today()), ("old",))
+    fake_inbox(monkeypatch, {
+        1: recent_message("Agoda", future.isoformat(), "1000001"),
+        2: recent_message("Expedia", future.isoformat(), "1000002"),
+        3: recent_message("Agoda", booking_id="1000003", subject="Booking cancelled"),
+        4: recent_message("Expedia", booking_id="1000004", subject="Reservation modified"),
+    })
+    monitor.scan_mailbox()
+    assert not any(kind in {"alert", "deferred_alert", "booking_cancelled", "booking_modified"}
+                   for kind, _ in events.queue)
+    assert state.pending_for_date(date.today()) == []
+    assert state.pending_for_date(future) == []
+    assert set(state.data["bookings"]) == {"agoda:OLD-12345"}
+
+
+def test_quiet_hours_persist_then_release_pending_without_duplicate(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path, quiet_hours_enabled=True)
+    fake_inbox(monkeypatch, {1: recent_message()})
+    monkeypatch.setattr(mail_monitor, "is_quiet_hours", lambda: True)
+    monitor.scan_mailbox()
+    assert [kind for kind, _ in events.queue if kind == "alert"] == []
+    assert len([kind for kind, _ in events.queue if kind == "deferred_alert"]) == 1
+    assert len(state.pending_for_date(date.today())) == 1
+    monitor.scan_mailbox()
+    assert len(state.pending_for_date(date.today())) == 1

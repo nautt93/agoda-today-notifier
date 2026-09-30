@@ -193,6 +193,36 @@ def test_agoda_additional_arrival_dates(arrival):
     assert parse_date(arrival, "Agoda") == date(2026, 9, 30)
 
 
+@pytest.mark.parametrize("arrival", ["30 9, 2026", "30 tháng 9, 2026", "30/09/2026", "30 September 2026"])
+@pytest.mark.parametrize("label", ["Check-in", "Ngày nhận phòng", "Arrival date"])
+def test_legacy_agoda_inline_confirmation_dates(arrival, label):
+    message = EmailMessage()
+    message["From"] = "Agoda <no-reply@mail.agoda.com>"
+    message["Subject"] = "Booking confirmation"
+    message.set_content(f"Booking ID: 987654321 Guest Name: Jane Doe {label}: {arrival} Check-out: 02/10/2026")
+    event = parse_booking_message(message)
+    assert event is not None
+    assert event.checkin_date == date(2026, 9, 30)
+    assert event.checkout_date == date(2026, 10, 2)
+
+
+def test_legacy_agoda_without_readable_booking_id_still_alerts():
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Booking confirmation"
+    message.set_content("Guest Name: Jane Doe\nCheck-in: 30 9, 2026")
+    event = parse_booking_message(message)
+    assert event is not None
+    assert event.booking_id == ""
+    assert event.checkin_date == date(2026, 9, 30)
+
+
+def test_expedia_reservation_details_template(expedia_message_factory):
+    event = parse_booking_message(expedia_message_factory(BASE, subject="Reservation details"))
+    assert event is not None
+    assert event.source == "Expedia"
+
+
 def test_agoda_localized_voucher_nested_html_and_horizontal_dates():
     message = EmailMessage()
     message["From"] = "booking@agoda.com"

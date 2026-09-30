@@ -11,11 +11,12 @@ from datetime import date, datetime, timedelta
 from email import message_from_bytes, policy
 from typing import Any
 
-from .models import BOOKING_STATUS_CANCELLED, BOOKING_STATUS_MODIFIED
+from .models import BOOKING_STATUS_NEW
 from .parsing import is_trusted_booking_sender, parse_booking_message
 from .state import PARSER_STATE_VERSION, StateStore
 
 LOGGER = logging.getLogger(__name__)
+RECENT_MESSAGE_LIMIT = 500  # Same bounded inbox window as 1.5.5.
 
 
 def is_quiet_hours(when: datetime | None = None, start_hour: int = 0, end_hour: int = 8) -> bool:
@@ -81,8 +82,7 @@ class ImapMonitor(threading.Thread):
             try:
                 processed = self.scan_mailbox()
                 if processed:
-                    self.emit("log", f"Đã xử lý {processed} email booking mới/cập nhật.")
-                self._queue_due_alerts()
+                    self.emit("log", f"Đã đọc {processed} email mới.")
                 self.emit("status", "Đang theo dõi email Agoda + Expedia")
             except Exception as exc:
                 LOGGER.exception("IMAP scan failed")
@@ -91,13 +91,6 @@ class ImapMonitor(threading.Thread):
             self.wake_event.wait(delay)
             self.wake_event.clear()
         self.emit("status", "Đã dừng theo dõi")
-
-    def _queue_due_alerts(self) -> None:
-        for alert in self.state.queue_due_alerts(date.today()):
-            if self.config.get("quiet_hours_enabled", True) and is_quiet_hours():
-                self.emit("deferred_alert", alert)
-            else:
-                self.emit("alert", alert)
 
     def scan_mailbox(self) -> int:
         host = str(self.config["imap_host"]).strip()
@@ -110,7 +103,9 @@ class ImapMonitor(threading.Thread):
         tls_context = ssl.create_default_context()
         processed_count = 0
         failed_count = 0
-        self.emit("status", "Đang quét hộp thư Agoda + Expedia…")
+        today_count = 0
+        other_day_count = 0
+        self.emit("status", "Đang kiểm tra thư mới nhất Agoda + Expedia…")
         with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
             client.login(address, self.password)
             status, _ = client.select("INBOX", readonly=True)
@@ -124,40 +119,43 @@ class ImapMonitor(threading.Thread):
                     uid_validity = raw_value.decode("ascii", errors="ignore") if isinstance(raw_value, bytes) else str(raw_value)
             except Exception:
                 pass
-            # Ask the server for likely senders. Fall back to all headers if its SEARCH parser differs.
-            status, data = client.uid(
-                "search", None, "SINCE", since, "OR", "FROM", '"agoda"', "FROM", '"expedia"'
-            )
-            if status != "OK":
-                status, data = client.uid("search", None, "SINCE", since)
+            # 1.5.5 searches recent UIDs, then fetches only the newest 500 messages.
+            # Do not download the whole mailbox or defer alerts until a history replay finishes.
+            status, data = client.uid("search", None, "SINCE", since)
             if status != "OK" or not data:
                 raise RuntimeError("Không tìm được email trong Inbox")
-            uids = data[0].split()
-            for uid_raw in uids:
+            uids = sorted(data[0].split(), key=int)[-RECENT_MESSAGE_LIMIT:]
+            self.emit("log", f"Chỉ kiểm tra {len(uids)} thư gần nhất (tối đa {RECENT_MESSAGE_LIMIT}); đọc thư mới trước.")
+            for uid_raw in reversed(uids):
                 if self.stop_event.is_set():
                     break
                 uid = uid_raw.decode("ascii", errors="ignore")
                 uid_key = mailbox_uid_key(self.identity_hash, uid_validity, uid)
                 if self.state.is_processed(uid_key):
                     continue
-                status, payload = client.uid(
-                    "fetch", uid_raw,
-                    "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT MESSAGE-ID DATE)] RFC822.SIZE)",
-                )
-                header_bytes = _response_bytes(payload) if status == "OK" else None
-                if not header_bytes:
-                    # A transient/partial fetch must be retried; never consume the UID.
-                    self.state.record_parse_failure(uid_key, "Không tải được header email")
+                try:
+                    # Direct body fetch matches 1.5.5 and avoids a second round-trip/header gate.
+                    status, payload = client.uid("fetch", uid_raw, "(BODY.PEEK[])")
+                except imaplib.IMAP4.abort:
+                    raise
+                except Exception:
+                    failed_count += 1
+                    LOGGER.exception("Cannot fetch email UID %s", uid)
+                    self.state.record_parse_failure(uid_key, "Không tải được nội dung email")
+                    self.emit("log", f"Email UID {uid}: tải lỗi; sẽ thử lại, tiếp tục thư khác.")
                     continue
-                header = message_from_bytes(header_bytes, policy=policy.default)
-                sender = str(header.get("From", ""))
-                if not is_trusted_booking_sender(sender):
-                    continue
-                message_id = str(header.get("Message-ID", "")).strip()
-                status, payload = client.uid("fetch", uid_raw, "(BODY.PEEK[])")
                 raw = _response_bytes(payload) if status == "OK" else None
                 if not raw:
+                    failed_count += 1
                     self.state.record_parse_failure(uid_key, "Không tải được nội dung email")
+                    continue
+                try:
+                    message = message_from_bytes(raw, policy=policy.default)
+                    sender = str(message.get("From", ""))
+                    message_id = str(message.get("Message-ID", "")).strip()
+                except Exception:
+                    failed_count += 1
+                    self.state.record_parse_failure(uid_key, "Không đọc được email")
                     continue
                 if not message_id:
                     message_id = hashlib.sha256(raw).hexdigest()
@@ -166,8 +164,11 @@ class ImapMonitor(threading.Thread):
                     # This message was copied/moved to a new UID; remember the alias to avoid downloading it again.
                     self.state.remember_processed_aliases(uid_key)
                     continue
+                if not is_trusted_booking_sender(sender):
+                    self.state.remember_processed_aliases(uid_key, message_key)
+                    processed_count += 1
+                    continue
                 try:
-                    message = message_from_bytes(raw, policy=policy.default)
                     event = parse_booking_message(message)
                 except Exception:
                     LOGGER.exception("Cannot parse booking email UID %s", uid)
@@ -181,23 +182,32 @@ class ImapMonitor(threading.Thread):
                     if attempts in {1, 5, 20}:
                         self.emit("log", f"Email UID {uid}: chưa đọc đủ mã booking/ngày check-in hoặc chưa nhận diện được mẫu xác nhận; sẽ thử lại.")
                     continue
-                affected_dates = self.state.apply_event(event, (uid_key, message_key))
                 processed_count += 1
-                if event.status not in {BOOKING_STATUS_CANCELLED, BOOKING_STATUS_MODIFIED}:
-                    day = event.checkin_date.isoformat() if event.checkin_date else "chưa đọc được"
-                    self.emit("log", f"Đã đọc {event.source} {event.booking_id}: check-in {day}.")
-                affects_today = lifecycle_affects_today(affected_dates)
-                if event.status == BOOKING_STATUS_CANCELLED and affects_today:
-                    self.emit("log", f"Đã hủy booking {event.source} {event.booking_id}; xóa cảnh báo chờ.")
-                    self.emit("booking_cancelled", event)
-                elif event.status == BOOKING_STATUS_MODIFIED and affects_today:
-                    self.emit("log", f"Đã cập nhật booking {event.source} {event.booking_id}.")
-                    self.emit("booking_modified", event)
+                # Restore the 1.5.5 contract: only NEW confirmations arriving TODAY alert.
+                # Do not retain future arrivals for automatic reminders or replay lifecycle events.
+                if event.status != BOOKING_STATUS_NEW:
+                    self.state.remember_processed_aliases(uid_key, message_key)
+                    continue
+                today = date.today()
+                if event.checkin_date != today:
+                    other_day_count += 1
+                    self.state.remember_processed_aliases(uid_key, message_key)
+                    continue
+                alert = self.state.register_today_confirmation(event, (uid_key, message_key), today)
+                if alert is None:
+                    self.emit("log", f"{event.source} {event.booking_id or '(không có mã)'}: đã ghi nhận; không báo lặp.")
+                    continue
+                today_count += 1
+                self.emit("log", f"BÁO NGAY {alert.source} {alert.booking_id or '(không có mã)'}: check-in {today.isoformat()}.")
+                if self.config.get("quiet_hours_enabled", True) and is_quiet_hours():
+                    self.emit("deferred_alert", alert)
+                else:
+                    self.emit("alert", alert)
+                self.emit("history_changed", None)
         if processed_count:
             self.emit("history_changed", None)
-        self._queue_due_alerts()
-        self.emit("log", f"Quét xong: {processed_count} email đã xử lý; {failed_count} email chưa đọc được; "
-                  f"{len(self.state.pending_for_date(date.today()))} booking hôm nay chờ xác nhận.")
+        self.emit("log", f"Quét xong: {processed_count} thư mới; {today_count} booking hôm nay được ghi nhận; "
+                  f"{other_day_count} booking ngày khác bỏ qua; {failed_count} thư đọc lỗi.")
         return processed_count
 
 

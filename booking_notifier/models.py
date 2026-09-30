@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any
@@ -31,7 +32,12 @@ class BookingEvent:
 
     @property
     def storage_id(self) -> str:
-        return f"{self.source.lower()}:{self.booking_id.upper()}"
+        if self.booking_id:
+            return f"{self.source.lower()}:{self.booking_id.upper()}"
+        # 1.5.5 also alerts on Agoda confirmations whose booking ID is not readable.
+        raw = "|".join((self.subject, self.received_at,
+                        self.checkin_date.isoformat() if self.checkin_date else "", self.sender))
+        return f"{self.source.lower()}:alert:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -47,4 +53,3 @@ class BookingEvent:
             data[field] = date.fromisoformat(raw) if raw else None
         allowed = cls.__dataclass_fields__.keys()
         return cls(**{key: data[key] for key in allowed if key in data})
-

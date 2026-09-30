@@ -66,7 +66,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Sửa OTA tải xong bị thoát: chờ bộ cập nhật sẵn sàng, mở lại ứng dụng và xác nhận khởi động. Khôi phục đúng 9 cột Excel bản 1.5.5: STT trống, tên khách, ngày đến, ngày đi, số đêm, tiền dạng số, hai ô trống, nguồn và hạng phòng." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Khôi phục cơ chế nhận thư 1.5.5: chỉ đọc 500 thư gần nhất, đọc thư mới trước, báo ngay booking check-in hôm nay; thêm mẫu Expedia. Không quét toàn bộ hộp thư, không tự nhắc booking ngày khác. Sửa ngày check-in nằm giữa dòng và khôi phục MP3; lỗi âm thanh không đóng popup." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

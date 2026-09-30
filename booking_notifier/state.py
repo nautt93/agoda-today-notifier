@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from .config import STATE_PATH, atomic_json_write
-from .models import BOOKING_STATUS_CANCELLED, BookingEvent
+from .models import BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent
 
 STATE_SCHEMA = 4
-PARSER_STATE_VERSION = "p6"
+PARSER_STATE_VERSION = "p7"
 
 
 def _now() -> str:
@@ -19,7 +19,7 @@ def _now() -> str:
 
 
 class StateStore:
-    """Atomic booking state, scheduling, cancellation, and deduplication."""
+    """Persist today's pending notifications, legacy history, and deduplication."""
 
     def __init__(self, path: Path = STATE_PATH) -> None:
         self.path = path
@@ -40,7 +40,7 @@ class StateStore:
         value.setdefault("pending_alerts", [])
         value.setdefault("history", [])
         value.setdefault("parse_failures", {})
-        # Keep v1.5 history/pending records readable; future scheduling uses bookings.
+        # Keep v1.5 history/pending and v1.6/1.7 saved records readable.
         if not isinstance(value["bookings"], dict):
             value["bookings"] = {}
         if not isinstance(value["processed_keys"], list):
@@ -71,7 +71,9 @@ class StateStore:
             self._save_locked()
             return int(record["attempts"])
 
-    def apply_event(self, event: BookingEvent, processed_keys: Iterable[str]) -> set[date]:
+    def apply_event(
+        self, event: BookingEvent, processed_keys: Iterable[str], queue_for_date: date | None = None,
+    ) -> set[date]:
         """Apply the event atomically and return every check-in date it affects."""
         with self.lock:
             storage_id = event.storage_id
@@ -127,6 +129,8 @@ class StateStore:
             new_checkin_date = self._record_checkin_date(existing)
             if new_checkin_date:
                 affected_dates.add(new_checkin_date)
+            if queue_for_date is not None:
+                self._queue_booking_locked(existing, storage_id, queue_for_date)
             existing_keys = list(self.data["processed_keys"])
             existing_set = set(existing_keys)
             for key in processed_keys:
@@ -138,6 +142,36 @@ class StateStore:
                 self.data["parse_failures"].pop(key, None)
             self._save_locked()
             return affected_dates
+
+    def register_today_confirmation(
+        self, event: BookingEvent, processed_keys: Iterable[str], today: date,
+    ) -> BookingEvent | None:
+        """Commit a today's confirmation and its pending popup in the same write."""
+        if event.status != BOOKING_STATUS_NEW or event.checkin_date != today:
+            raise ValueError("Chỉ nhận xác nhận booking check-in hôm nay.")
+        with self.lock:
+            already_pending = any(self._record_storage_id(record) == event.storage_id
+                                  for record in self.data["pending_alerts"])
+            self.apply_event(event, processed_keys, queue_for_date=today)
+            if not already_pending:
+                for record in self.data["pending_alerts"]:
+                    if self._record_storage_id(record) == event.storage_id:
+                        return BookingEvent.from_dict(record)
+            return None
+
+    def _queue_booking_locked(self, record: dict[str, Any], storage_id: str, today: date) -> BookingEvent | None:
+        if record.get("status") != "active" or record.get("checkin_date") != today.isoformat():
+            return None
+        if record.get("alerted_for") == today.isoformat() or any(
+            self._record_storage_id(item) == storage_id for item in self.data["pending_alerts"]
+        ):
+            return None
+        queued = dict(record)
+        queued["pending_key"] = f"{storage_id}:{today.isoformat()}"
+        queued["queued_at"] = _now()
+        alert = BookingEvent.from_dict(queued)
+        self.data["pending_alerts"].append(queued)
+        return alert
 
     def _repair_booking_details_locked(self, booking: dict[str, Any], storage_id: str) -> None:
         """Enrich previously shown records after a parser upgrade without alerting twice."""
@@ -180,31 +214,6 @@ class StateStore:
             if changed:
                 self.data["processed_keys"] = existing[-20000:]
                 self._save_locked()
-
-    def queue_due_alerts(self, today: date) -> list[BookingEvent]:
-        due: list[BookingEvent] = []
-        today_text = today.isoformat()
-        with self.lock:
-            pending_ids = {self._record_storage_id(record) for record in self.data["pending_alerts"]}
-            for storage_id, record in self.data["bookings"].items():
-                if record.get("status") != "active":
-                    continue
-                if record.get("checkin_date") != today_text:
-                    continue
-                if record.get("alerted_for") == today_text or storage_id in pending_ids:
-                    continue
-                queued = dict(record)
-                queued["pending_key"] = f"{storage_id}:{today_text}"
-                queued["queued_at"] = _now()
-                self.data["pending_alerts"].append(queued)
-                pending_ids.add(storage_id)
-                try:
-                    due.append(BookingEvent.from_dict(queued))
-                except (TypeError, ValueError):
-                    continue
-            if due:
-                self._save_locked()
-        return due
 
     def pending_for_date(self, today: date) -> list[BookingEvent]:
         result: list[BookingEvent] = []
@@ -253,7 +262,9 @@ class StateStore:
     def _record_storage_id(record: dict[str, Any]) -> str:
         source = str(record.get("source", "Agoda")).lower()
         booking_id = str(record.get("booking_id", "")).upper()
-        return f"{source}:{booking_id}"
+        if booking_id:
+            return f"{source}:{booking_id}"
+        return BookingEvent.from_dict({"source": "Agoda", **record}).storage_id
 
     @staticmethod
     def _record_checkin_date(record: dict[str, Any]) -> date | None:
