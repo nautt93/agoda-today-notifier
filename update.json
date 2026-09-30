@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.0",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.0/Booking-Checkin-Hom-Nay-1.7.0.exe",
-  "sha256": "d623b5f1fdec1bea6c0a8cbb70416e9855cc3ccaa109972b6d157f2f4ee5b0a3",
-  "size": 23731013,
-  "notes": "Giao diện premium mới, bố cục cấu hình rõ ràng và khôi phục chuột phải sao chép booking sang Excel.",
-  "signature": "4VEF+mVa/v+ZTT39Ufc8l8pQvj9SpVJtN96WsNPYhyq4wrk9NCQpKEWtinTJOsiBHsLMhem+eDxZRlHiCN8LBQ=="
+  "version": "1.7.1",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.1/Booking-Checkin-Hom-Nay-1.7.1.exe",
+  "sha256": "828825cc85eeea0a4c7338f41474c455402f327aeb23890f6f866ecfbc339544",
+  "size": 23739112,
+  "notes": "Hiển thị đầy đủ tên khách và hạng phòng Agoda, tự sửa dữ liệu lịch sử, đồng thời khôi phục popup luôn nổi khi ứng dụng đang thu nhỏ.",
+  "signature": "8sAy5l63AyACxdeqLL0hZyxGYco+ycK3j2PUe3Y356zOwctTfjiUi66pY+0GN4Maz0e+q2NbQlJwpWY06n4VBQ=="
 }
