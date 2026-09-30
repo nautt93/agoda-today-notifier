@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.6.0",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.6.0/Booking-Checkin-Hom-Nay-1.6.0.exe",
-  "sha256": "21636cafb0ae42c1f638f855d054e894018ed9dd923309b1eb5df026f400ac3d",
-  "size": 23712122,
-  "notes": "Sửa cảnh báo booking tương lai, vòng đời Expedia, TLS IMAP, parser doanh thu và bảo mật OTA.",
-  "signature": "G/7Gxt+QIzk52KthGrZju/+dkHzY4v5CXEN5x41oGezul+8yjyOSLAJfvXn0hllx9sCa6T/zP3QOQ6EY4/c3DA=="
+  "version": "1.6.1",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.6.1/Booking-Checkin-Hom-Nay-1.6.1.exe",
+  "sha256": "1179d0ad983cc5a6dded9695c78dc8b7f5875fb0d5254235de1775bd5b0b1b3e",
+  "size": 23711433,
+  "notes": "Expedia dùng cùng cơ chế với Agoda: chỉ thông báo booking check-in hôm nay; chỉnh sửa và hủy ngày khác được xử lý âm thầm.",
+  "signature": "4THCPct4FLKP+OIauYBh+56dezzI1O/5Ezl2d/8OLUJIB0zUA+nk8OkLmLbjdFF8xQN+hwQCcm8PB1eCrJ6iDQ=="
 }
