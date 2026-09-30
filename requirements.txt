@@ -1,0 +1,4 @@
+cryptography==50.0.1
+Pillow==12.3.0
+pyserial==3.5
+
