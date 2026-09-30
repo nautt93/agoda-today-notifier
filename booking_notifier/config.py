@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.5"
+APP_VERSION = "1.7.6"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"

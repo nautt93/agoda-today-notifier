@@ -254,3 +254,122 @@ def test_agoda_vietnamese_cancellation_does_not_become_new_booking():
     message["Subject"] = "Hủy đặt phòng Agoda"
     message.set_content("Booking ID: 987654321\nCheck-in: 30-Sep-2026")
     assert parse_booking_message(message).status == BOOKING_STATUS_CANCELLED
+
+
+def detail_message(source, plain, html=None):
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com" if source == "Agoda" else "notify@expediapartnercentral.com"
+    message["Subject"] = "New booking confirmation"
+    message.set_content(f"Booking ID: 987654321\nCheck-in: 30/09/2026\n{plain}")
+    if html:
+        message.add_alternative(html, subtype="html")
+    return message
+
+
+@pytest.mark.parametrize("source", ["Agoda", "Expedia"])
+@pytest.mark.parametrize("label", ["Guest Name", "Lead Guest Name", "Traveler Name", "Tên khách"])
+def test_wrapped_plain_name_and_room_are_complete(source, label):
+    event = parse_booking_message(detail_message(source, f"""{label}: Nguyễn
+Văn An
+Room Type Name: Deluxe Double
+Room with Balcony
+No. of Rooms: 2
+Phone: +84 900 000 000
+"""))
+    assert event.guest_name == "Nguyễn Văn An"
+    assert event.room_type == "Deluxe Double Room with Balcony x2"
+
+
+@pytest.mark.parametrize("tag", ["br", "p", "div"])
+def test_complete_html_name_wins_over_incomplete_plain_alternative(tag):
+    separator = "<br>" if tag == "br" else f"</{tag}><{tag}>"
+    name = "NGUYEN" + separator + "VAN AN"
+    room = "Superior" + separator + "Double Room"
+    if tag != "br":
+        name, room = f"<{tag}>{name}</{tag}>", f"<{tag}>{room}</{tag}>"
+    message = detail_message("Agoda", "Lead Guest Name: NGUYEN", f"""<table>
+    <tr><td>Lead Guest Name</td><td>{name}</td></tr>
+    <tr><td>Room Type</td><td>{room}</td></tr>
+    <tr><td>Check-in</td><td>30/09/2026</td></tr></table>""")
+    event = parse_booking_message(message)
+    assert event.guest_name == "NGUYEN VAN AN"
+    assert event.room_type == "Superior Double Room"
+
+
+def test_split_html_first_last_names_win_over_first_line_of_lead_name():
+    message = detail_message("Agoda", "Lead Guest Name: Tuấn", """<table>
+    <tr><td>Customer First Name</td><td>Tuấn</td><td>Customer Last Name</td><td>Nguyễn</td></tr>
+    <tr><td>Room Type Name</td><td>Superior King</td></tr></table>""")
+    event = parse_booking_message(message)
+    assert event.guest_name == "Tuấn Nguyễn"
+    assert event.room_type == "Superior King"
+
+
+def test_horizontal_name_and_room_headers_read_values_below():
+    message = detail_message("Agoda", "fallback", """<table>
+    <tr><th>Guest Name</th><th>Room Type</th></tr>
+    <tr><td>NGUYEN<br>VAN AN</td><td>Deluxe Double</td></tr></table>""")
+    event = parse_booking_message(message)
+    assert event.guest_name == "NGUYEN VAN AN"
+    assert event.room_type == "Deluxe Double"
+
+
+def test_customer_info_name_wrapping_stops_before_contact_information():
+    event = parse_booking_message(detail_message("Agoda", """Customer Info - Name: Nguyễn
+Văn An, Phone: +84 900 000 000
+Room Type: Superior Double
+Email: guest@example.com
+"""))
+    assert event.guest_name == "Nguyễn Văn An"
+    assert event.room_type == "Superior Double"
+
+
+def test_room_name_field_is_not_room_code_or_other_booking_metadata():
+    event = parse_booking_message(detail_message("Agoda", """Guest Name: Jane Doe
+Room Type Code: DLX123
+Hạng phòng: Deluxe Double
+No. of Rooms: 1
+"""))
+    assert event.guest_name == "Jane Doe"
+    assert event.room_type == "Deluxe Double"
+
+
+def test_empty_fields_do_not_take_the_next_labels_as_values():
+    event = parse_booking_message(detail_message("Agoda", """Guest Name:
+Room Type:
+Phone: +84 900 000 000
+"""))
+    assert event.guest_name == ""
+    assert event.room_type == ""
+
+
+def test_split_room_summary_quantity_is_supported():
+    event = parse_booking_message(detail_message("Agoda", """Guest Name: Jane Doe
+Room(s):
+2 x
+Superior Double Room
+1 x Family Suite
+Check-out: 02/10/2026
+"""))
+    assert event.room_type == "Superior Double Room x2; Family Suite"
+
+
+def test_rich_non_table_html_wins_over_shortened_plain_name():
+    message = detail_message("Agoda", "Guest Name: NGUYEN", """<div>Guest Name:</div>
+    <div>NGUYEN</div><div>VAN AN</div><div>Room Type:</div>
+    <div>Superior Double Room</div><div>Check-in: 30/09/2026</div>""")
+    event = parse_booking_message(message)
+    assert event.guest_name == "NGUYEN VAN AN"
+    assert event.room_type == "Superior Double Room"
+
+
+def test_room_summary_keeps_wrapped_names_and_all_allocations():
+    event = parse_booking_message(detail_message("Agoda", """Guest Name: Jane Doe
+Rooms:
+2 x Deluxe
+Double Room
+1 x Family
+Suite
+Phone: +84 900 000 000
+"""))
+    assert event.room_type == "Deluxe Double Room x2; Family Suite"

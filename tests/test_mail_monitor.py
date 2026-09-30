@@ -328,6 +328,47 @@ def test_bootstrap_uses_sequence_positions_not_uid_numbers(tmp_path, monkeypatch
     assert fetched == list(range(300, 100, -10))
 
 
+def test_parser_upgrade_repairs_recent_saved_booking_without_duplicate_alert(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path)
+    today = date.today()
+    incomplete = BookingEvent(source="Agoda", booking_id="987654321", checkin_date=today, guest_name="NGUYEN")
+    alert = state.register_today_confirmation(incomplete, ("old-parser",), today)
+    state.acknowledge(alert)
+    old_key = f"incremental:p7:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(old_key, [100])
+    state.finish_mailbox_read(old_key, 100)
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Booking confirmation"
+    message.set_content(f"Booking ID: 987654321\nCheck-in: {today.isoformat()}\nGuest Name: NGUYEN\nVAN AN\nRoom Type: Superior Double Room")
+    searches = []
+    fetched = fake_inbox(monkeypatch, {100: message.as_bytes()}, searches=searches)
+    monitor.scan_mailbox()
+    assert fetched == [100]
+    assert state.history()[0]["guest_name"] == "NGUYEN VAN AN"
+    assert state.history()[0]["room_type"] == "Superior Double Room"
+    assert not any(kind == "alert" for kind, _ in events.queue)
+    fetched.clear()
+    monitor, _, _ = make_monitor(tmp_path)
+    monitor.scan_mailbox()
+    assert fetched == []
+    assert searches == [("UID", "101:*"), ("1:*",), ("UID", "101:*")]
+
+
+def test_parser_upgrade_keeps_old_offline_cursor_and_pending_batch(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path)
+    old_key = f"incremental:p7:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(old_key, [89, 90])
+    state.finish_mailbox_read(old_key, 90)
+    messages = {uid: recent_message(booking_id=str(1000000 + uid)) for uid in [89, 90, *range(91, 126)]}
+    fetched = fake_inbox(monkeypatch, messages)
+    assert monitor.scan_mailbox() == 36
+    assert fetched == [*range(125, 90, -1), 89]
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 36
+    cursor, pending = state.mailbox_read_position(f"incremental:v1:{monitor.identity_hash}:123")
+    assert cursor == 125 and pending == []
+
+
 def test_uidvalidity_change_bootstraps_new_mailbox_not_old_cursor(tmp_path, monkeypatch):
     monitor, _, events = make_monitor(tmp_path)
     messages = {100: recent_message(booking_id="1000100")}

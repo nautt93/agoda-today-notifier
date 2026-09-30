@@ -89,6 +89,9 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
         message["Subject"] = "Booking confirmation"
         message["Message-ID"] = "<popup-smoke@example>"
         message.set_content(f"Booking ID: 707908051 Check-in: {date.today().isoformat()} Guest name: Test Guest")
+        message.add_alternative(f"""<p>Booking ID: 707908051</p><p>Check-in: {date.today().isoformat()}</p>
+        <table><tr><td>Lead Guest Name</td><td>Nguyễn<br>Văn An</td></tr>
+        <tr><td>Room Type</td><td>Superior<br>Double Room</td></tr></table>""", subtype="html")
 
         class FakeClient:
             def __init__(self, *args, **kwargs):
@@ -119,10 +122,14 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
         root.update()
         assert app.active_alert is not None
         assert app.active_alert.source == source
+        assert app.active_alert.guest_name == "Nguyễn Văn An"
+        assert app.active_alert.room_type == "Superior Double Room"
         assert app.active_popup is not None and app.active_popup.winfo_viewable()
         assert bool(app.active_popup.attributes("-topmost"))
         assert root.state() != "iconic"
         app.acknowledge_alert()
+        values = app.history_tree.item(app.history_tree.get_children()[0], "values")
+        assert values[2:4] == ("Nguyễn Văn An", "Superior Double Room")
         monitor.scan_mailbox()
         app._drain_events()
         assert app.active_popup is None

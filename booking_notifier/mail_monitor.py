@@ -117,13 +117,18 @@ class ImapMonitor(threading.Thread):
                 pass
             if not uid_validity.isdigit():
                 raise RuntimeError("Máy chủ không trả UIDVALIDITY; chưa thể lưu mốc đọc thư an toàn.")
-            mailbox_key = f"incremental:{PARSER_STATE_VERSION}:{self.identity_hash}:{uid_validity}"
+            # Reading position must survive parser upgrades and retain offline arrivals.
+            mailbox_key = f"incremental:v1:{self.identity_hash}:{uid_validity}"
             position = self.state.mailbox_read_position(mailbox_key)
+            if position is None:
+                position = self.state.mailbox_read_position(f"incremental:p7:{self.identity_hash}:{uid_validity}")
+            refresh_details = position is not None and self.state.mailbox_parser_version(mailbox_key) != PARSER_STATE_VERSION
+            count = int(counts[0])
+            recent_criteria = (f"{max(1, count - RECENT_MESSAGE_LIMIT + 1)}:*",) if count else ("ALL",)
             if position is None:
                 # SEARCH sequence range returns UIDs for only the last 20 entries,
                 # not a list of the entire mailbox. Empty inbox may receive mail meanwhile.
-                count = int(counts[0])
-                criteria = (f"{max(1, count - RECENT_MESSAGE_LIMIT + 1)}:*",) if count else ("ALL",)
+                criteria = recent_criteria
             else:
                 criteria = ("UID", f"{position[0] + 1}:*")
             status, data = client.uid("search", None, *criteria)
@@ -132,11 +137,23 @@ class ImapMonitor(threading.Thread):
             found = sorted({int(uid) for uid in data[0].split()})
             # IMAP n:* also matches the last UID when n is greater than that UID.
             uids = found[-RECENT_MESSAGE_LIMIT:] if position is None else [uid for uid in found if uid > position[0]]
-            pending = self.state.stage_mailbox_reads(mailbox_key, uids)
+            new_count = len(uids)
+            if refresh_details:
+                status, recent_data = client.uid("search", None, *recent_criteria)
+                if status != "OK" or not recent_data or recent_data[0] is None:
+                    raise RuntimeError("Không đọc được thư gần nhất để bổ sung tên khách/hạng phòng.")
+                recent_uids = sorted({int(uid) for uid in recent_data[0].split()})[-RECENT_MESSAGE_LIMIT:]
+                uids = sorted(set(uids) | set(recent_uids))
+                self.emit("log", f"Nâng cấp parser: bổ sung tên khách/hạng phòng từ tối đa {RECENT_MESSAGE_LIMIT} thư gần nhất; không báo lặp.")
+            # Preserve both the old cursor and unfinished batch during the 1.7.5 migration.
+            work = sorted(set(uids) | set(position[1] if position else []))
+            pending = self.state.stage_mailbox_reads(
+                mailbox_key, work, minimum_cursor=position[0] if position else 0, parser_version=PARSER_STATE_VERSION,
+            )
             if position is None:
                 self.emit("log", f"Lần đầu: kiểm tra {len(uids)} thư gần nhất (tối đa {RECENT_MESSAGE_LIMIT}).")
             else:
-                self.emit("log", f"Có {len(uids)} thư mới; {len(pending) - len(uids)} thư còn thiếu cần thử lại.")
+                self.emit("log", f"Có {new_count} thư mới; {len(pending) - new_count} thư cần đọc lại/bổ sung dữ liệu.")
             for uid_number in pending:
                 if self.stop_event.is_set():
                     break

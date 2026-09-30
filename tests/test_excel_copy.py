@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import date
+from email.message import EmailMessage
 
 from app import excel_tsv, excel_tsv_rows
 from booking_notifier.excel_export import excel_amount_value
 from booking_notifier.models import BookingEvent
+from booking_notifier.parsing import parse_booking_message
 
 
 def booking(booking_id: str, guest_name: str) -> BookingEvent:
@@ -60,3 +62,20 @@ def test_multiple_bookings_copy_as_multiple_excel_rows():
     rows = text.split("\r\n")
     assert len(rows) == 2
     assert all(len(row.split("\t")) == 9 for row in rows)
+
+
+def test_wrapped_booking_fields_reach_exact_legacy_excel_columns():
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Booking confirmation"
+    message.set_content("""Booking ID: 987654321
+Check-in: 30/09/2026
+Check-out: 02/10/2026
+Guest Name: Nguyễn
+Văn An
+Room Type: Superior
+Double Room
+Booked and Payable by Agoda: VND 1,031,040.00
+""")
+    alert = parse_booking_message(message)
+    assert excel_tsv(alert) == "\tNguyễn Văn An\t30\t2\t2\t1031040\t\t\tAgoda Superior Double Room"

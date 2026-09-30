@@ -11,7 +11,7 @@ from .config import STATE_PATH, atomic_json_write
 from .models import BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent
 
 STATE_SCHEMA = 5
-PARSER_STATE_VERSION = "p7"
+PARSER_STATE_VERSION = "p8"
 
 
 def _now() -> str:
@@ -66,7 +66,13 @@ class StateStore:
                 return None
             return int(record["cursor"]), list(record["pending_uids"])
 
-    def stage_mailbox_reads(self, mailbox_key: str, uids: list[int]) -> list[int]:
+    def mailbox_parser_version(self, mailbox_key: str) -> str:
+        with self.lock:
+            return str(self.data["mailbox_reads"].get(mailbox_key, {}).get("parser_version", ""))
+
+    def stage_mailbox_reads(
+        self, mailbox_key: str, uids: list[int], *, minimum_cursor: int = 0, parser_version: str = "",
+    ) -> list[int]:
         """Save the entire batch before advancing the cursor or fetching any body.
 
         A crash, stopped monitor, or failed parse leaves unfinished UIDs recoverable.
@@ -74,8 +80,10 @@ class StateStore:
         with self.lock:
             record = self.data["mailbox_reads"].setdefault(mailbox_key, {"cursor": 0, "pending_uids": []})
             pending = set(record["pending_uids"]) | set(uids)
-            record["cursor"] = max(int(record["cursor"]), max(uids, default=0))
+            record["cursor"] = max(int(record["cursor"]), minimum_cursor, max(uids, default=0))
             record["pending_uids"] = sorted(pending)
+            if parser_version:
+                record["parser_version"] = parser_version
             self._save_locked()
             return sorted(pending, reverse=True)
 

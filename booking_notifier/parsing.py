@@ -36,10 +36,12 @@ GUEST_LABELS = (
     "customer full name", "customer name", "booking holder", "reservation holder",
     "booked by", "lead traveler", "primary traveler", "danh sách khách", "khách chính",
     "tên khách", "tên khách hàng", "tên người nhận phòng",
+    "guest", "lead guest", "primary guest", "main guest", "booker", "tên người đặt",
 )
 ROOM_LABELS = (
     "room type name", "room name", "room category", "booked room", "unit type", "unit name",
     "accommodation type", "room type", "hạng phòng", "loại phòng", "tên phòng",
+    "room description", "room type booked", "booked room type",
 )
 ROOM_COUNT_LABELS = (
     "number of rooms", "rooms booked", "room quantity", "quantity", "qty",
@@ -94,6 +96,19 @@ AGODA_REVENUE_LABELS = (
     "Tổng tiền",
 )
 
+FIRST_NAME_LABELS = ("customer first name", "guest first name", "traveler first name", "first name", "given name")
+LAST_NAME_LABELS = ("customer last name", "guest last name", "traveler last name", "last name", "surname", "family name")
+FIELD_LABELS = (
+    GUEST_LABELS + FIRST_NAME_LABELS + LAST_NAME_LABELS + ROOM_LABELS + ROOM_COUNT_LABELS
+    + CHECKIN_LABELS + CHECKOUT_LABELS + CONFIRMATION_LABELS + PAYMENT_MODEL_LABELS
+    + AGODA_REVENUE_LABELS + EXPEDIA_COLLECT_REVENUE_LABELS + PROPERTY_COLLECT_REVENUE_LABELS
+    + ("booking id", "agoda booking id", "itinerary id", "customer info", "phone", "telephone", "tel",
+       "email", "address", "country", "country of residence", "country region of residence", "nationality",
+       "special requests", "remarks", "meal plan", "rate plan", "cancellation policy", "payment instructions",
+       "room type code", "room code", "guest details", "reservation details", "booking details", "room details",
+       "adults", "children", "number of guests", "occupancy", "thank you", "important information")
+)
+
 MONTHS = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
     "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7,
@@ -114,6 +129,14 @@ def strip_accents(value: object) -> str:
 def normalized(value: object) -> str:
     text = html.unescape(str(value or "")).replace("\xa0", " ")
     return re.sub(r"\s+", " ", strip_accents(text)).strip().lower().rstrip(":")
+
+
+FIELD_HEADERS = {normalized(label) for label in FIELD_LABELS}
+INLINE_FIELD_BOUNDARY = re.compile(
+    r"(?<!\w)(?:" + "|".join(re.escape(normalized(label)).replace(r"\ ", r"\s+")
+                             for label in sorted(FIELD_LABELS, key=len, reverse=True)) + r")\s*:",
+    re.IGNORECASE,
+)
 
 
 class _TextParser(HTMLParser):
@@ -155,7 +178,7 @@ class _TableParser(HTMLParser):
             self.cell = None
         elif tag in {"td", "th"} and self.row is not None:
             self.cell = []
-        elif tag == "br" and self.cell is not None:
+        elif tag in {"br", "p", "div", "li"} and self.cell is not None:
             self.cell.append(" ")
 
     def handle_data(self, data: str) -> None:
@@ -164,6 +187,8 @@ class _TableParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.lower()
+        if tag in {"p", "div", "li"} and self.cell is not None:
+            self.cell.append(" ")
         if tag in {"td", "th"} and self.cell is not None and self.row is not None:
             self.row.append(re.sub(r"\s+", " ", html.unescape("".join(self.cell))).strip())
             self.cell = None
@@ -185,6 +210,7 @@ def html_to_text(value: str) -> str:
 
 def message_body_text(message: Message) -> str:
     parts: list[str] = []
+    html_parts: list[str] = []
     iterable = message.walk() if message.is_multipart() else [message]
     for part in iterable:
         if part.is_multipart() or part.get_content_disposition() == "attachment":
@@ -201,8 +227,13 @@ def message_body_text(message: Message) -> str:
             except LookupError:
                 value = payload.decode("utf-8", errors="replace")
         text = str(value)
-        parts.append(html_to_text(text) if content_type == "text/html" else text)
-    return "\n\n".join(parts)
+        if content_type == "text/html":
+            html_parts.append(html_to_text(text))
+        else:
+            parts.append(text)
+    # OTA plain alternatives can contain only a shortened name/omit the room.
+    # Prefer the richer HTML, retaining plain text as a fallback for absent fields.
+    return "\n\n".join(html_parts + parts)
 
 
 def message_table_rows(message: Message) -> list[list[str]]:
@@ -360,11 +391,13 @@ def _row_value(rows: Sequence[Sequence[str]], labels: Iterable[str]) -> str:
             if inline_value.strip():
                 return inline_value.strip()
             for candidate in row[column + 1:]:
+                if _is_field_header(candidate):
+                    break  # Horizontal headings have their values below, not to the right.
                 if candidate.strip():
                     return candidate.strip()
             if row_index + 1 < len(rows) and column < len(rows[row_index + 1]):
                 candidate = rows[row_index + 1][column].strip()
-                if candidate:
+                if candidate and not _is_field_header(candidate):
                     return candidate
     return ""
 
@@ -451,16 +484,39 @@ def clean_guest_name(value: str) -> str:
     return value
 
 
-def _extract_field(text: str, labels: Iterable[str], max_length: int = 180) -> str:
+def _is_field_header(value: str) -> bool:
+    return normalized(value.split(":", 1)[0]) in FIELD_HEADERS
+
+
+def _field_value(value: str, max_length: int, multiline: bool = False) -> str:
+    # Retain wrapped names/room descriptions, but stop at another labelled field.
+    parts: list[str] = []
+    for line in value.splitlines()[:8 if multiline else 1]:
+        if not line.strip() or _is_field_header(line):
+            break
+        line = unicodedata.normalize("NFC", line)
+        match = INLINE_FIELD_BOUNDARY.search(strip_accents(line))
+        if match:
+            line = line[:match.start()]
+        if line.strip():
+            parts.append(line.strip(" ,;"))
+        if match or len(" ".join(parts)) > max_length:
+            break
+    value = re.sub(r"\s+", " ", " ".join(parts)).strip(" :-,;")
+    return value if len(value) <= max_length else ""
+
+
+def _extract_field(text: str, labels: Iterable[str], max_length: int = 180, *, multiline: bool = False) -> str:
     """Read a label/value pair even when an OTA inserts a line break after the label."""
     for label in labels:
         match = re.search(
-            rf"(?:{label})[ \t]*[:\-]?[ \t]*(?:\r?\n[ \t]*)?([^\r\n]{{1,{max_length}}})",
+            rf"(?<!\w)(?:{label})(?!\w)[ \t]*[:\-]?[ \t]*(?:\r?\n[ \t]*)?([^\r\n]+)",
             text,
             re.IGNORECASE,
         )
         if match:
-            value = re.sub(r"\s+", " ", match.group(1)).strip(" :-")
+            payload = text[match.start(1):] if multiline else match.group(1)
+            value = _field_value(payload, max_length, multiline)
             if value:
                 return value[:max_length]
     return ""
@@ -489,40 +545,19 @@ def _customer_info_name(text: str, rows: Sequence[Sequence[str]]) -> str:
             candidate = clean_guest_name(match.group(1))
             if candidate:
                 return candidate
-    match = re.search(
-        r"Customer[ \t]+Info[ \t]*(?:-|–)?[ \t]*Name[ \t]*:[ \t]*(?:\r?\n[ \t]*)?"
-        r"(.+?)(?=[ \t]*,[ \t]*(?:Phone|Telephone|Tel\.?)\s*:|\r?$)",
-        text,
-        re.IGNORECASE | re.MULTILINE,
-    )
-    return clean_guest_name(match.group(1)) if match else ""
+    return clean_guest_name(_extract_field(
+        text, (r"Customer\s+Info\s*(?:-|–)?\s*Name",), 120, multiline=True,
+    ))
 
 
 def extract_guest_name(text: str, rows: Sequence[Sequence[str]]) -> str:
-    for pattern in (
-        r"^[ \t]*Lead[ \t]+guest[ \t]+(?:full[ \t]+)?name[ \t]*:?[ \t]*"
-        r"(?:\r?\n[ \t]*)?([^\r\n]+)",
-        r"^[ \t]*Guest[ \t]*:[ \t]*([^\r\n]{2,120})$",
-    ):
-        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-        if match:
-            candidate = clean_guest_name(match.group(1))
-            if candidate:
-                return candidate
-
     customer_info = _customer_info_name(text, rows)
     if customer_info:
         return customer_info
 
     table_full_name = clean_guest_name(_row_value(rows, GUEST_LABELS))
-    first_labels = (
-        "customer first name", "guest first name", "traveler first name", "first name", "given name",
-    )
-    last_labels = (
-        "customer last name", "guest last name", "traveler last name", "last name", "surname", "family name",
-    )
-    table_first = clean_guest_name(_row_value(rows, first_labels))
-    table_last = clean_guest_name(_row_value(rows, last_labels))
+    table_first = clean_guest_name(_row_value(rows, FIRST_NAME_LABELS))
+    table_last = clean_guest_name(_row_value(rows, LAST_NAME_LABELS))
     combined_table_name = clean_guest_name(" ".join(part for part in (table_first, table_last) if part))
     if table_first and table_last and combined_table_name:
         return combined_table_name
@@ -536,23 +571,24 @@ def extract_guest_name(text: str, rows: Sequence[Sequence[str]]) -> str:
         r"Primary\s*traveler(?:\s*name)?", r"Lead\s*traveler(?:\s*name)?",
         r"Reservation\s*holder", r"Booked\s*by", r"T[eê]n\s*kh[aá]ch(?:\s*h[aà]ng)?",
         r"T[eê]n\s*người\s*đặt",
-    ), 120))
+    ), 120, multiline=True))
     if full_name:
         return full_name
 
     first_name = clean_guest_name(_extract_field(text, (
         r"Customer\s*First\s*Name", r"Guest\s*First\s*Name", r"Traveler\s*First\s*Name",
         r"First\s*Name", r"Given\s*Name", r"(?<!\w)T[eê]n(?:\s*đ[eệ]m)?(?!\w)",
-    ), 60))
+    ), 60, multiline=True))
     last_name = clean_guest_name(_extract_field(text, (
         r"Customer\s*Last\s*Name", r"Guest\s*Last\s*Name", r"Traveler\s*Last\s*Name",
         r"Last\s*Name", r"Surname", r"Family\s*Name", r"(?<!\w)H[oọ](?!\w)",
-    ), 60))
+    ), 60, multiline=True))
     combined = clean_guest_name(" ".join(part for part in (first_name, last_name) if part))
     if combined:
         return combined
     return clean_guest_name(_extract_field(
-        text, (r"Lead\s*guest", r"Primary\s*guest", r"Main\s*guest", r"Booker"), 120,
+        text, (r"Lead\s*guest", r"Primary\s*guest", r"Main\s*guest", r"Booker", r"Guest(?=\s*:)"),
+        120, multiline=True,
     ))
 
 
@@ -562,6 +598,7 @@ def clean_room_type(value: str) -> str:
     if (
         not 2 <= len(value) <= 220
         or not any(character.isalpha() for character in value)
+        or _is_field_header(value)
         or normalized(value) in rejected | {"xem trong email"}
     ):
         return ""
@@ -585,19 +622,31 @@ def _format_room_allocations(allocations: OrderedDict[str, tuple[str, int]]) -> 
 
 def _room_summary(text: str) -> str:
     summary = re.search(
-        r"^[ \t]*Rooms?(?:\(s\))?[ \t]*:?[ \t]*(?:\r?\n[ \t]*)?(?=\d{1,3}[ \t]*[x×])",
+        r"^[ \t]*Room(?:s|\(s\))?[ \t]*:?[ \t]*(?:\r?\n[ \t]*)?(?=\d{1,3}[ \t]*[x×])",
         text,
         re.IGNORECASE | re.MULTILINE,
     )
     if not summary:
         return ""
     allocations: OrderedDict[str, tuple[str, int]] = OrderedDict()
-    for line in text[summary.end():].splitlines():
-        match = re.fullmatch(r"\s*(\d{1,3})\s*[x×]\s*(.+?)\s*", line)
+    payload = re.sub(r"(\d{1,3}[ \t]*[x×])[ \t]*\r?\n[ \t]*", r"\1 ", text[summary.end():])
+    lines = payload.splitlines()
+    index = 0
+    allocation_pattern = re.compile(r"\s*(\d{1,3})\s*[x×]\s*(.+?)\s*")
+    while index < len(lines):
+        match = allocation_pattern.fullmatch(lines[index])
         if not match:
             break
         count = _parse_room_count(match.group(1))
-        room = clean_room_type(match.group(2))
+        parts = [match.group(2)]
+        index += 1
+        while index < len(lines) and len(parts) < 8:
+            line = lines[index]
+            if not line.strip() or _is_field_header(line) or allocation_pattern.fullmatch(line):
+                break
+            parts.append(line)
+            index += 1
+        room = clean_room_type(_field_value("\n".join(parts), 220, multiline=True))
         if count is None or not room:
             continue
         key = normalized(room)
@@ -653,7 +702,7 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
 
     for header_index, header in enumerate(rows):
         room_column = _header_index(header, ROOM_LABELS)
-        if room_column is None:
+        if room_column is None or any(cell.strip() and not _is_field_header(cell) for cell in header):
             continue
         count_column = _header_index(header, ROOM_COUNT_LABELS)
         allocations: OrderedDict[str, tuple[str, int]] = OrderedDict()
@@ -662,12 +711,13 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
                 break
             room = clean_room_type(row[room_column])
             if not room:
-                if allocations:
-                    break
-                continue
+                break
             count = 1
             if count_column is not None and count_column < len(row):
-                count = _parse_room_count(row[count_column]) or 1
+                parsed_count = _parse_room_count(row[count_column])
+                if parsed_count is None and row[count_column].strip():
+                    break  # Do not treat unrelated detail tables as extra booked rooms.
+                count = parsed_count or 1
             key = normalized(room)
             old = allocations.get(key, (room, 0))
             allocations[key] = (old[0], old[1] + count)
@@ -678,12 +728,13 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
     labels = (
         "Room Type Name", "Room Name", "Room Category", "Booked Room", "Room Type",
         "Unit Type", "Unit Name", "Accommodation Type", "Hạng phòng", "Loại phòng", "Tên phòng",
+        "Room Description", "Room Type Booked", "Booked Room Type",
     )
     value = _row_value(rows, labels) or _extract_field(text, (
-        r"Room\s*type(?:\s*name)?", r"Room\s*category", r"Room\s*name", r"Booked\s*room",
-        r"Unit\s*(?:type|name)", r"Accommodation\s*type", r"Lo[aạ]i\s*ph[oò]ng", r"T[eê]n\s*ph[oò]ng",
-    ), 220)
-    value = re.sub(r"^code\s*:\s*", "", value, flags=re.IGNORECASE)
+        r"Room\s*type\s*(?:name|booked)", r"Room\s*type(?!\s*code)", r"Room\s*category",
+        r"Room\s*(?:name|description)", r"Booked\s*room(?:\s*type)?", r"Unit\s*(?:type|name)",
+        r"Accommodation\s*type", r"H[aạ]ng\s*ph[oò]ng", r"Lo[aạ]i\s*ph[oò]ng", r"T[eê]n\s*ph[oò]ng",
+    ), 220, multiline=True)
     match = re.match(r"\s*(\d{1,3})\s*[x×]\s*(.+)", value)
     if match:
         return f"{clean_room_type(match.group(2))} x{int(match.group(1))}"
