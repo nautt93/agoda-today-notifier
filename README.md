@@ -10,6 +10,7 @@
 - Lưu booking tương lai, không bỏ lỡ cảnh báo khi email đến trước ngày nhận phòng.
 - Phân biệt Expedia Collect và Hotel/Property Collect; ưu tiên đúng khoản tiền khách sạn thực nhận.
 - Hiển thị popup, phát âm thanh, lưu lịch sử và chép 9 cột sang Excel.
+- Giao diện desktop tối–vàng cao cấp; nhấp đúp, Ctrl+C hoặc chuột phải để sao chép một/nhiều booking sang Excel.
 - Hỗ trợ màn hình/loa F92 qua USB serial.
 - OTA dùng HTTPS, SHA-256 và chữ ký Ed25519 độc lập; updater tự rollback khi thay thế thất bại.
 - Mật khẩu ứng dụng được mã hóa bằng Windows DPAPI.

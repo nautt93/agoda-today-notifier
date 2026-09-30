@@ -113,25 +113,35 @@ def excel_tsv(alert: BookingEvent) -> str:
     return "\t".join(safe(value) for value in values)
 
 
+def excel_tsv_rows(alerts: list[BookingEvent]) -> str:
+    return "\r\n".join(excel_tsv(alert) for alert in alerts)
+
+
 class BookingNotifierApp:
     COLORS = {
-        "bg": "#F3F7FC",
+        "bg": "#F5F2EC",
         "surface": "#FFFFFF",
-        "text": "#172033",
-        "muted": "#64748B",
-        "border": "#D8E2EF",
-        "primary": "#155EEF",
-        "success": "#16835A",
-        "warning": "#B54708",
-        "agoda": "#E23B31",
-        "expedia": "#1668E3",
+        "surface_alt": "#FAF8F4",
+        "text": "#1B2430",
+        "muted": "#697386",
+        "border": "#DED8CE",
+        "primary": "#172A42",
+        "primary_hover": "#213B5B",
+        "gold": "#B68A3A",
+        "gold_hover": "#98712E",
+        "success": "#48C79A",
+        "warning": "#D49A45",
+        "danger": "#C95B5B",
+        "agoda": "#D94A43",
+        "expedia": "#2563A9",
+        "header_text": "#F7F2E8",
     }
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("940x680")
-        self.root.minsize(820, 600)
+        self.root.geometry("1080x740")
+        self.root.minsize(920, 640)
         self.root.configure(bg=self.COLORS["bg"])
         self.config_store = ConfigStore()
         self.config = self.config_store.load()
@@ -167,72 +177,195 @@ class BookingNotifierApp:
             style.theme_use("clam")
         except tk.TclError:
             pass
+        self.root.option_add("*Font", "Segoe UI 10")
+        self.root.option_add("*Menu.Font", "Segoe UI 10")
         style.configure("TFrame", background=self.COLORS["bg"])
         style.configure("Card.TFrame", background=self.COLORS["surface"])
+        style.configure("Alt.TFrame", background=self.COLORS["surface_alt"])
         style.configure("TLabel", background=self.COLORS["bg"], foreground=self.COLORS["text"], font=("Segoe UI", 10))
         style.configure("Card.TLabel", background=self.COLORS["surface"], foreground=self.COLORS["text"], font=("Segoe UI", 10))
-        style.configure("Title.TLabel", background=self.COLORS["bg"], foreground=self.COLORS["text"], font=("Segoe UI Semibold", 22))
-        style.configure("Muted.TLabel", background=self.COLORS["bg"], foreground=self.COLORS["muted"], font=("Segoe UI", 10))
-        style.configure("Primary.TButton", font=("Segoe UI Semibold", 10), padding=(14, 8))
-        style.configure("Treeview", rowheight=30, font=("Segoe UI", 9))
-        style.configure("Treeview.Heading", font=("Segoe UI Semibold", 9))
-
-    def _build_ui(self) -> None:
-        shell = ttk.Frame(self.root, padding=22)
-        shell.pack(fill="both", expand=True)
-        header = ttk.Frame(shell)
-        header.pack(fill="x", pady=(0, 14))
-        ttk.Label(header, text="BOOKING DESK", style="Title.TLabel").pack(side="left")
-        ttk.Label(header, text=f"Agoda + Expedia  •  v{APP_VERSION}", style="Muted.TLabel").pack(side="left", padx=16, pady=(9, 0))
-        self.status_var = tk.StringVar(value="Chưa khởi động")
-        ttk.Label(header, textvariable=self.status_var, foreground=self.COLORS["success"]).pack(side="right", pady=(9, 0))
-
-        toolbar = ttk.Frame(shell)
-        toolbar.pack(fill="x", pady=(0, 12))
-        ttk.Button(toolbar, text="Quét ngay", command=self.check_now, style="Primary.TButton").pack(side="left")
-        ttk.Button(toolbar, text="Lưu & khởi động", command=self.save_and_start).pack(side="left", padx=8)
-        ttk.Button(toolbar, text="Kiểm tra IMAP", command=self.test_connection).pack(side="left")
-        ttk.Button(toolbar, text="Thoát", command=self.exit_app).pack(side="right")
-        ttk.Button(toolbar, text="Kiểm tra cập nhật", command=lambda: self.check_for_updates(False)).pack(
-            side="right", padx=(0, 8)
+        style.configure("Alt.TLabel", background=self.COLORS["surface_alt"], foreground=self.COLORS["text"], font=("Segoe UI", 10))
+        style.configure("SectionTitle.TLabel", background=self.COLORS["surface"], foreground=self.COLORS["primary"], font=("Segoe UI Semibold", 14))
+        style.configure("Muted.TLabel", background=self.COLORS["bg"], foreground=self.COLORS["muted"], font=("Segoe UI", 9))
+        style.configure("CardMuted.TLabel", background=self.COLORS["surface"], foreground=self.COLORS["muted"], font=("Segoe UI", 9))
+        style.configure("Field.TLabel", background=self.COLORS["surface"], foreground=self.COLORS["muted"], font=("Segoe UI Semibold", 9))
+        style.configure("TButton", font=("Segoe UI Semibold", 9), padding=(14, 9), borderwidth=1)
+        style.configure(
+            "Accent.TButton", background=self.COLORS["gold"], foreground="#FFFFFF",
+            bordercolor=self.COLORS["gold"], lightcolor=self.COLORS["gold"], darkcolor=self.COLORS["gold"],
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("active", self.COLORS["gold_hover"]), ("pressed", self.COLORS["gold_hover"])],
+            foreground=[("disabled", "#E5DFD2"), ("!disabled", "#FFFFFF")],
+        )
+        style.configure(
+            "Primary.TButton", background=self.COLORS["primary"], foreground="#FFFFFF",
+            bordercolor=self.COLORS["primary"], lightcolor=self.COLORS["primary"], darkcolor=self.COLORS["primary"],
+        )
+        style.map(
+            "Primary.TButton",
+            background=[("active", self.COLORS["primary_hover"]), ("pressed", self.COLORS["primary_hover"])],
+        )
+        style.configure(
+            "Secondary.TButton", background=self.COLORS["surface"], foreground=self.COLORS["primary"],
+            bordercolor=self.COLORS["border"], lightcolor=self.COLORS["surface"], darkcolor=self.COLORS["surface"],
+        )
+        style.map("Secondary.TButton", background=[("active", self.COLORS["surface_alt"])])
+        style.configure(
+            "Danger.TButton", background=self.COLORS["surface"], foreground="#9E3F3F",
+            bordercolor=self.COLORS["border"], lightcolor=self.COLORS["surface"], darkcolor=self.COLORS["surface"],
+        )
+        style.map("Danger.TButton", background=[("active", "#FFF1F0")])
+        style.configure("Premium.TNotebook", background=self.COLORS["bg"], borderwidth=0, tabmargins=(0, 0, 0, 0))
+        style.configure(
+            "Premium.TNotebook.Tab", background=self.COLORS["bg"], foreground=self.COLORS["muted"],
+            font=("Segoe UI Semibold", 10), padding=(20, 11), borderwidth=0,
+        )
+        style.map(
+            "Premium.TNotebook.Tab",
+            background=[("selected", self.COLORS["surface"]), ("active", self.COLORS["surface_alt"])],
+            foreground=[("selected", self.COLORS["primary"]), ("active", self.COLORS["text"])],
+        )
+        style.configure(
+            "Treeview", background=self.COLORS["surface"], fieldbackground=self.COLORS["surface"],
+            foreground=self.COLORS["text"], rowheight=38, font=("Segoe UI", 9), borderwidth=0,
+        )
+        style.map("Treeview", background=[("selected", "#E8E1D4")], foreground=[("selected", self.COLORS["primary"])])
+        style.configure(
+            "Treeview.Heading", background=self.COLORS["surface_alt"], foreground=self.COLORS["primary"],
+            font=("Segoe UI Semibold", 9), padding=(8, 10), relief="flat", borderwidth=0,
+        )
+        style.map("Treeview.Heading", background=[("active", "#EFEAE1")])
+        style.configure("TEntry", fieldbackground=self.COLORS["surface"], foreground=self.COLORS["text"], padding=(9, 8))
+        style.configure("TCombobox", fieldbackground=self.COLORS["surface"], foreground=self.COLORS["text"], padding=(9, 7))
+        style.configure("Card.TCheckbutton", background=self.COLORS["surface"], foreground=self.COLORS["text"], font=("Segoe UI", 9))
+        style.map("Card.TCheckbutton", background=[("active", self.COLORS["surface"])])
+        style.configure(
+            "Section.TLabelframe", background=self.COLORS["surface"], bordercolor=self.COLORS["border"],
+            lightcolor=self.COLORS["border"], darkcolor=self.COLORS["border"], borderwidth=1, relief="solid",
+        )
+        style.configure(
+            "Section.TLabelframe.Label", background=self.COLORS["surface"], foreground=self.COLORS["primary"],
+            font=("Segoe UI Semibold", 11), padding=(4, 0),
         )
 
-        notebook = ttk.Notebook(shell)
-        notebook.pack(fill="both", expand=True)
-        self.history_tab = ttk.Frame(notebook, padding=12)
-        self.settings_tab = ttk.Frame(notebook, padding=12)
-        self.log_tab = ttk.Frame(notebook, padding=12)
-        notebook.add(self.history_tab, text="Lịch sử cảnh báo")
-        notebook.add(self.settings_tab, text="Cài đặt")
-        notebook.add(self.log_tab, text="Nhật ký")
+    def _build_ui(self) -> None:
+        shell = tk.Frame(self.root, bg=self.COLORS["bg"])
+        shell.pack(fill="both", expand=True)
+
+        header = tk.Frame(shell, bg=self.COLORS["primary"], height=112)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        brand = tk.Frame(header, bg=self.COLORS["primary"])
+        brand.pack(side="left", padx=28, pady=20)
+        tk.Label(
+            brand, text="M", width=3, height=1, bg=self.COLORS["gold"], fg="#FFFFFF",
+            font=("Georgia", 18, "bold"), padx=4, pady=7,
+        ).pack(side="left", padx=(0, 14))
+        brand_text = tk.Frame(brand, bg=self.COLORS["primary"])
+        brand_text.pack(side="left")
+        tk.Label(
+            brand_text, text="BOOKING DESK", bg=self.COLORS["primary"], fg=self.COLORS["header_text"],
+            font=("Segoe UI Semibold", 21),
+        ).pack(anchor="w")
+        tk.Label(
+            brand_text, text="Agoda + Expedia  •  Chỉ báo khách đến hôm nay",
+            bg=self.COLORS["primary"], fg="#BFC9D8", font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(3, 0))
+
+        self.status_var = tk.StringVar(value="Chưa khởi động")
+        status_box = tk.Frame(header, bg=self.COLORS["primary"])
+        status_box.pack(side="right", padx=28, pady=22)
+        tk.Label(
+            status_box, text=f"PHIÊN BẢN {APP_VERSION}", bg=self.COLORS["primary"], fg="#97A7BB",
+            font=("Segoe UI Semibold", 8),
+        ).pack(anchor="e")
+        self.status_label = tk.Label(
+            status_box, textvariable=self.status_var, bg=self.COLORS["primary"], fg=self.COLORS["success"],
+            font=("Segoe UI Semibold", 10), anchor="e",
+        )
+        self.status_label.pack(anchor="e", pady=(8, 0))
+
+        toolbar_card = tk.Frame(
+            shell, bg=self.COLORS["surface"], highlightbackground=self.COLORS["border"], highlightthickness=1,
+        )
+        toolbar_card.pack(fill="x", padx=26, pady=(18, 14))
+        toolbar = ttk.Frame(toolbar_card, style="Card.TFrame", padding=(14, 12))
+        toolbar.pack(fill="x")
+        ttk.Button(toolbar, text="Lưu & khởi động", command=self.save_and_start, style="Accent.TButton").pack(side="left")
+        ttk.Button(toolbar, text="Quét email ngay", command=self.check_now, style="Primary.TButton").pack(side="left", padx=8)
+        ttk.Button(toolbar, text="Kiểm tra IMAP", command=self.test_connection, style="Secondary.TButton").pack(side="left")
+        ttk.Button(toolbar, text="Thoát", command=self.exit_app, style="Danger.TButton").pack(side="right")
+        ttk.Button(
+            toolbar, text="Kiểm tra cập nhật", command=lambda: self.check_for_updates(False), style="Secondary.TButton",
+        ).pack(side="right", padx=(0, 8))
+
+        notebook = ttk.Notebook(shell, style="Premium.TNotebook")
+        notebook.pack(fill="both", expand=True, padx=26, pady=(0, 22))
+        self.history_tab = ttk.Frame(notebook, style="Card.TFrame", padding=18)
+        self.settings_tab = ttk.Frame(notebook, style="Card.TFrame", padding=0)
+        self.log_tab = ttk.Frame(notebook, style="Card.TFrame", padding=18)
+        notebook.add(self.history_tab, text="BOOKING HÔM NAY")
+        notebook.add(self.settings_tab, text="CẤU HÌNH")
+        notebook.add(self.log_tab, text="NHẬT KÝ")
         self._build_history()
         self._build_settings()
         self._build_log()
 
     def _build_history(self) -> None:
+        heading = ttk.Frame(self.history_tab, style="Card.TFrame")
+        heading.pack(fill="x", pady=(0, 14))
+        title_box = ttk.Frame(heading, style="Card.TFrame")
+        title_box.pack(side="left")
+        ttk.Label(title_box, text="Booking đã xác nhận", style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            title_box, text="Nhấp đúp hoặc nhấn chuột phải vào một dòng để sao chép sang Excel.",
+            style="CardMuted.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
+        ttk.Label(
+            heading, text=datetime.now().strftime("Hôm nay • %d/%m/%Y"), style="CardMuted.TLabel",
+        ).pack(side="right", anchor="n", pady=4)
+
+        table = ttk.Frame(self.history_tab, style="Card.TFrame")
+        table.pack(fill="both", expand=True)
         columns = ("source", "booking", "guest", "room", "checkin", "revenue")
-        self.history_tree = ttk.Treeview(self.history_tab, columns=columns, show="headings")
+        self.history_tree = ttk.Treeview(table, columns=columns, show="headings", selectmode="extended")
         headings = {
             "source": "Nguồn", "booking": "Mã booking", "guest": "Khách",
             "room": "Phòng", "checkin": "Check-in", "revenue": "Tổng thu",
         }
-        widths = {"source": 80, "booking": 120, "guest": 170, "room": 240, "checkin": 95, "revenue": 130}
+        widths = {"source": 90, "booking": 135, "guest": 185, "room": 260, "checkin": 105, "revenue": 145}
         for column in columns:
             self.history_tree.heading(column, text=headings[column])
             self.history_tree.column(column, width=widths[column], minwidth=60)
-        scrollbar = ttk.Scrollbar(self.history_tab, command=self.history_tree.yview)
+        scrollbar = ttk.Scrollbar(table, command=self.history_tree.yview)
         self.history_tree.configure(yscrollcommand=scrollbar.set)
         self.history_tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self.history_tree.tag_configure("even", background=self.COLORS["surface"])
+        self.history_tree.tag_configure("odd", background=self.COLORS["surface_alt"])
         self.history_tree.bind("<Double-1>", self.copy_selected_history)
+        self.history_tree.bind("<Return>", self.copy_selected_history)
+        self.history_tree.bind("<Control-c>", self.copy_selected_history)
+        self.history_tree.bind("<Button-3>", self.show_history_context_menu)
+        self.history_tree.bind("<Button-2>", self.show_history_context_menu)
+        self.history_menu = tk.Menu(
+            self.root, tearoff=False, bg=self.COLORS["surface"], fg=self.COLORS["text"],
+            activebackground=self.COLORS["gold"], activeforeground="#FFFFFF", relief="solid", borderwidth=1,
+        )
+        self.history_menu.add_command(label="Sao chép dòng đã chọn sang Excel", command=self.copy_selected_history)
+        self.history_menu.add_command(label="Sao chép toàn bộ lịch sử sang Excel", command=self.copy_all_history)
 
     def _build_settings(self) -> None:
-        canvas = tk.Canvas(self.settings_tab, bg=self.COLORS["bg"], highlightthickness=0)
+        canvas = tk.Canvas(self.settings_tab, bg=self.COLORS["surface"], highlightthickness=0)
         scrollbar = ttk.Scrollbar(self.settings_tab, command=canvas.yview)
-        content = ttk.Frame(canvas)
+        content = ttk.Frame(canvas, style="Card.TFrame", padding=18)
+        self.settings_canvas = canvas
         window = canvas.create_window((0, 0), window=content, anchor="nw")
         content.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
+        self.root.bind_all("<MouseWheel>", self._scroll_settings, add="+")
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
@@ -254,55 +387,120 @@ class BookingNotifierApp:
         self.f92_builtin_sound_var = tk.BooleanVar()
         self.update_source_var = tk.StringVar()
 
-        fields = [
-            ("Nhà cung cấp", self.provider_var, "combo"),
-            ("Máy chủ IMAP", self.host_var, "entry"),
-            ("Cổng", self.port_var, "entry"),
-            ("Địa chỉ email", self.email_var, "entry"),
-            ("Mật khẩu ứng dụng", self.password_var, "password"),
-            ("Quét mỗi (giây)", self.poll_var, "entry"),
-            ("Tìm email trong (ngày)", self.scan_days_var, "entry"),
-        ]
-        for row, (label, variable, kind) in enumerate(fields):
-            ttk.Label(content, text=label).grid(row=row, column=0, sticky="w", padx=(4, 18), pady=7)
-            if kind == "combo":
-                widget = ttk.Combobox(content, textvariable=variable, values=list(PROVIDERS), state="readonly")
-                widget.bind("<<ComboboxSelected>>", self.on_provider_changed)
-            else:
-                widget = ttk.Entry(content, textvariable=variable, show="•" if kind == "password" else "")
-            widget.grid(row=row, column=1, sticky="ew", pady=7)
-        row = len(fields)
-        ttk.Label(content, text="Âm thanh WAV").grid(row=row, column=0, sticky="w", padx=(4, 18), pady=7)
-        sound_frame = ttk.Frame(content)
-        sound_frame.grid(row=row, column=1, sticky="ew")
+        ttk.Label(content, text="Cấu hình vận hành", style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            content, text="Các thay đổi chỉ có hiệu lực sau khi bấm “Lưu & khởi động”.",
+            style="CardMuted.TLabel",
+        ).pack(anchor="w", pady=(4, 14))
+
+        connection = ttk.LabelFrame(
+            content, text="  Kết nối email  ", style="Section.TLabelframe", padding=(18, 14),
+        )
+        connection.pack(fill="x", pady=(0, 12))
+        connection.columnconfigure(0, weight=1)
+        connection.columnconfigure(1, weight=1)
+        self._add_setting_field(connection, "Nhà cung cấp", self.provider_var, "combo", 0, 0)
+        self._add_setting_field(connection, "Địa chỉ email", self.email_var, "entry", 0, 1)
+        self._add_setting_field(connection, "Máy chủ IMAP", self.host_var, "entry", 1, 0)
+        self._add_setting_field(connection, "Cổng IMAP", self.port_var, "entry", 1, 1)
+        self._add_setting_field(connection, "Mật khẩu ứng dụng", self.password_var, "password", 2, 0, 2)
+        self._add_setting_field(connection, "Quét mỗi (giây)", self.poll_var, "entry", 3, 0)
+        self._add_setting_field(connection, "Tìm email trong (ngày)", self.scan_days_var, "entry", 3, 1)
+
+        preferences = ttk.LabelFrame(
+            content, text="  Cảnh báo & khởi động  ", style="Section.TLabelframe", padding=(18, 14),
+        )
+        preferences.pack(fill="x", pady=(0, 12))
+        preferences.columnconfigure(0, weight=1)
+        preferences.columnconfigure(1, weight=1)
+        sound_block = ttk.Frame(preferences, style="Card.TFrame")
+        sound_block.grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(2, 12))
+        ttk.Label(sound_block, text="Âm thanh WAV tùy chọn", style="Field.TLabel").pack(anchor="w", pady=(0, 6))
+        sound_frame = ttk.Frame(sound_block, style="Card.TFrame")
+        sound_frame.pack(fill="x")
         ttk.Entry(sound_frame, textvariable=self.sound_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(sound_frame, text="Chọn", command=self.choose_sound).pack(side="left", padx=(7, 0))
-        row += 1
-        for text, variable in (
+        ttk.Button(sound_frame, text="Chọn tệp", command=self.choose_sound, style="Secondary.TButton").pack(side="left", padx=(8, 0))
+        checks = (
             ("Giờ yên lặng 00:00–08:00", self.quiet_var),
             ("Khởi động cùng Windows", self.start_windows_var),
             ("Thu nhỏ khi khởi động", self.start_minimized_var),
-            ("Bật màn hình F92", self.f92_enabled_var),
-            ("Bật loa tích hợp F92", self.f92_builtin_sound_var),
-        ):
-            ttk.Checkbutton(content, text=text, variable=variable).grid(row=row, column=1, sticky="w", pady=5)
-            row += 1
-        ttk.Label(content, text="Cổng F92").grid(row=row, column=0, sticky="w", padx=(4, 18), pady=7)
-        ttk.Entry(content, textvariable=self.f92_port_var).grid(row=row, column=1, sticky="ew", pady=7)
-        row += 1
-        ttk.Label(content, text="Âm báo F92 (1–4)").grid(row=row, column=0, sticky="w", padx=(4, 18), pady=7)
-        ttk.Entry(content, textvariable=self.f92_sound_var).grid(row=row, column=1, sticky="ew", pady=7)
-        row += 1
-        ttk.Button(content, text="Kiểm tra F92", command=self.test_f92).grid(row=row, column=1, sticky="w", pady=7)
-        row += 1
-        ttk.Label(content, text="Nguồn update.json").grid(row=row, column=0, sticky="w", padx=(4, 18), pady=7)
-        ttk.Entry(content, textvariable=self.update_source_var).grid(row=row, column=1, sticky="ew", pady=7)
-        content.columnconfigure(1, weight=1)
+        )
+        for index, (text, variable) in enumerate(checks):
+            ttk.Checkbutton(
+                preferences, text=text, variable=variable, style="Card.TCheckbutton",
+            ).grid(row=1 + index // 2, column=index % 2, sticky="w", padx=6, pady=5)
+
+        f92 = ttk.LabelFrame(
+            content, text="  Màn hình F92  ", style="Section.TLabelframe", padding=(18, 14),
+        )
+        f92.pack(fill="x", pady=(0, 12))
+        f92.columnconfigure(0, weight=1)
+        f92.columnconfigure(1, weight=1)
+        self._add_setting_field(f92, "Cổng thiết bị", self.f92_port_var, "entry", 0, 0)
+        self._add_setting_field(f92, "Âm báo (1–4)", self.f92_sound_var, "entry", 0, 1)
+        ttk.Checkbutton(
+            f92, text="Bật màn hình F92", variable=self.f92_enabled_var, style="Card.TCheckbutton",
+        ).grid(row=1, column=0, sticky="w", padx=6, pady=6)
+        ttk.Checkbutton(
+            f92, text="Bật loa tích hợp F92", variable=self.f92_builtin_sound_var, style="Card.TCheckbutton",
+        ).grid(row=1, column=1, sticky="w", padx=6, pady=6)
+        ttk.Button(f92, text="Kiểm tra thiết bị F92", command=self.test_f92, style="Secondary.TButton").grid(
+            row=2, column=0, sticky="w", padx=6, pady=(8, 2),
+        )
+
+        updates = ttk.LabelFrame(
+            content, text="  Cập nhật an toàn  ", style="Section.TLabelframe", padding=(18, 14),
+        )
+        updates.pack(fill="x", pady=(0, 8))
+        updates.columnconfigure(0, weight=1)
+        self._add_setting_field(updates, "Nguồn update.json đã ký", self.update_source_var, "entry", 0, 0)
+        ttk.Button(
+            updates, text="Kiểm tra cập nhật", command=lambda: self.check_for_updates(False), style="Secondary.TButton",
+        ).grid(row=0, column=1, sticky="s", padx=(8, 6), pady=6)
+
+    def _add_setting_field(
+        self,
+        parent: ttk.Frame,
+        label: str,
+        variable: tk.Variable,
+        kind: str,
+        row: int,
+        column: int,
+        columnspan: int = 1,
+    ) -> ttk.Widget:
+        block = ttk.Frame(parent, style="Card.TFrame")
+        block.grid(row=row, column=column, columnspan=columnspan, sticky="ew", padx=6, pady=6)
+        ttk.Label(block, text=label, style="Field.TLabel").pack(anchor="w", pady=(0, 6))
+        if kind == "combo":
+            widget: ttk.Widget = ttk.Combobox(
+                block, textvariable=variable, values=list(PROVIDERS), state="readonly",
+            )
+            widget.bind("<<ComboboxSelected>>", self.on_provider_changed)
+        else:
+            widget = ttk.Entry(block, textvariable=variable, show="•" if kind == "password" else "")
+        widget.pack(fill="x")
+        return widget
+
+    def _scroll_settings(self, event: tk.Event) -> str:
+        widget = event.widget
+        while widget:
+            if widget == self.settings_canvas:
+                self.settings_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+                return "break"
+            widget = getattr(widget, "master", None)
+        return ""
 
     def _build_log(self) -> None:
+        heading = ttk.Frame(self.log_tab, style="Card.TFrame")
+        heading.pack(fill="x", pady=(0, 12))
+        ttk.Label(heading, text="Nhật ký hệ thống", style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            heading, text="Thông tin kết nối, quét email và trạng thái thiết bị F92.", style="CardMuted.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
         self.log_text = tk.Text(
-            self.log_tab, wrap="word", state="disabled", bg="#0F172A", fg="#DCE7F5",
-            insertbackground="white", font=("Consolas", 10), relief="flat", padx=12, pady=12,
+            self.log_tab, wrap="word", state="disabled", bg=self.COLORS["primary"], fg="#D9E1EC",
+            insertbackground="white", selectbackground=self.COLORS["gold"], font=("Consolas", 9),
+            relief="flat", padx=16, pady=14,
         )
         self.log_text.pack(fill="both", expand=True)
 
@@ -558,15 +756,41 @@ class BookingNotifierApp:
         popup = tk.Toplevel(self.root)
         self.active_popup = popup
         popup.title(f"{alert.source} • Check-in hôm nay")
-        popup.geometry("560x510")
+        width, height = 620, 570
+        x = max(0, (popup.winfo_screenwidth() - width) // 2)
+        y = max(0, (popup.winfo_screenheight() - height) // 2 - 20)
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+        popup.resizable(False, False)
         popup.attributes("-topmost", True)
         popup.configure(bg=self.COLORS["surface"])
         accent = self.COLORS["expedia"] if alert.source == "Expedia" else self.COLORS["agoda"]
-        tk.Frame(popup, bg=accent, height=10).pack(fill="x")
-        body = tk.Frame(popup, bg=self.COLORS["surface"], padx=28, pady=22)
+
+        hero = tk.Frame(popup, bg=self.COLORS["primary"], height=118)
+        hero.pack(fill="x")
+        hero.pack_propagate(False)
+        hero_text = tk.Frame(hero, bg=self.COLORS["primary"])
+        hero_text.pack(side="left", padx=28, pady=23)
+        tk.Label(
+            hero_text, text="KHÁCH ĐẾN HÔM NAY", bg=self.COLORS["primary"], fg="#BFC9D8",
+            font=("Segoe UI Semibold", 9),
+        ).pack(anchor="w")
+        tk.Label(
+            hero_text, text=alert.guest_name or "Chưa đọc được tên khách",
+            bg=self.COLORS["primary"], fg=self.COLORS["header_text"], font=("Segoe UI Semibold", 22),
+            wraplength=430, justify="left",
+        ).pack(anchor="w", pady=(6, 0))
+        tk.Label(
+            hero, text=alert.source.upper(), bg=accent, fg="#FFFFFF", font=("Segoe UI Semibold", 9),
+            padx=14, pady=7,
+        ).pack(side="right", anchor="n", padx=28, pady=24)
+
+        body = tk.Frame(popup, bg=self.COLORS["surface"], padx=28, pady=20)
         body.pack(fill="both", expand=True)
-        tk.Label(body, text=f"{alert.source.upper()} • CHECK-IN HÔM NAY", bg=self.COLORS["surface"], fg=accent, font=("Segoe UI Semibold", 12)).pack(anchor="w")
-        tk.Label(body, text=alert.guest_name or "Chưa đọc được tên khách", bg=self.COLORS["surface"], fg=self.COLORS["text"], font=("Segoe UI Semibold", 24), wraplength=500, justify="left").pack(anchor="w", pady=(10, 20))
+        info_card = tk.Frame(
+            body, bg=self.COLORS["surface_alt"], highlightbackground=self.COLORS["border"], highlightthickness=1,
+            padx=18, pady=12,
+        )
+        info_card.pack(fill="x")
         rows = [
             ("Mã booking", alert.booking_id),
             ("Hạng phòng", alert.room_type or "—"),
@@ -575,15 +799,39 @@ class BookingNotifierApp:
             ("Số đêm", str(alert.nights) if alert.nights is not None else "—"),
             ("Tổng thu", alert.total_revenue or "—"),
         ]
-        for label, value in rows:
-            row = tk.Frame(body, bg=self.COLORS["surface"])
+        for index, (label, value) in enumerate(rows):
+            row = tk.Frame(info_card, bg=self.COLORS["surface_alt"])
             row.pack(fill="x", pady=5)
-            tk.Label(row, text=label, width=15, anchor="w", bg=self.COLORS["surface"], fg=self.COLORS["muted"], font=("Segoe UI", 10)).pack(side="left")
-            tk.Label(row, text=value, anchor="w", bg=self.COLORS["surface"], fg=self.COLORS["text"], font=("Segoe UI Semibold", 11), wraplength=350, justify="left").pack(side="left", fill="x", expand=True)
+            tk.Label(
+                row, text=label.upper(), width=16, anchor="w", bg=self.COLORS["surface_alt"],
+                fg=self.COLORS["muted"], font=("Segoe UI Semibold", 8),
+            ).pack(side="left")
+            tk.Label(
+                row, text=value, anchor="w", bg=self.COLORS["surface_alt"], fg=self.COLORS["text"],
+                font=("Segoe UI Semibold", 10), wraplength=380, justify="left",
+            ).pack(side="left", fill="x", expand=True)
+            if index < len(rows) - 1:
+                tk.Frame(info_card, bg="#E8E2D8", height=1).pack(fill="x", pady=(2, 0))
+
+        self.copy_feedback_var = tk.StringVar(value="Chuột phải hoặc Ctrl+C để sao chép 9 cột sang Excel")
+        tk.Label(
+            body, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(12, 0))
         actions = tk.Frame(body, bg=self.COLORS["surface"])
-        actions.pack(fill="x", side="bottom", pady=(18, 0))
-        ttk.Button(actions, text="Chép thông tin", command=self.copy_active_alert).pack(side="left")
-        ttk.Button(actions, text="Đã nhận", command=self.acknowledge_alert, style="Primary.TButton").pack(side="right")
+        actions.pack(fill="x", side="bottom", pady=(12, 0))
+        ttk.Button(
+            actions, text="Sao chép sang Excel", command=self.copy_active_alert, style="Secondary.TButton",
+        ).pack(side="left")
+        ttk.Button(actions, text="Đã nhận booking", command=self.acknowledge_alert, style="Accent.TButton").pack(side="right")
+        self.active_menu = tk.Menu(
+            popup, tearoff=False, bg=self.COLORS["surface"], fg=self.COLORS["text"],
+            activebackground=self.COLORS["gold"], activeforeground="#FFFFFF", relief="solid", borderwidth=1,
+        )
+        self.active_menu.add_command(label="Sao chép booking sang Excel", command=self.copy_active_alert)
+        popup.bind("<Button-3>", self.show_active_context_menu)
+        popup.bind("<Button-2>", self.show_active_context_menu)
+        popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
         popup.protocol("WM_DELETE_WINDOW", self.acknowledge_alert)
         popup.lift()
         popup.focus_force()
@@ -622,9 +870,18 @@ class BookingNotifierApp:
     def copy_active_alert(self) -> None:
         if not self.active_alert:
             return
-        self.root.clipboard_clear()
-        self.root.clipboard_append(excel_tsv(self.active_alert))
-        self.set_status("Đã chép 9 cột sang clipboard")
+        self._copy_alerts_to_clipboard([self.active_alert], "Đã sao chép booking sang Excel")
+        if hasattr(self, "copy_feedback_var"):
+            self.copy_feedback_var.set("Đã sao chép • Mở Excel và nhấn Ctrl+V")
+
+    def show_active_context_menu(self, event: tk.Event) -> str:
+        if not self.active_alert:
+            return "break"
+        try:
+            self.active_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.active_menu.grab_release()
+        return "break"
 
     def acknowledge_alert(self) -> None:
         if not self.active_alert:
@@ -646,27 +903,67 @@ class BookingNotifierApp:
         for item in self.history_tree.get_children():
             self.history_tree.delete(item)
         for index, record in enumerate(self.state.history()):
+            checkin = str(record.get("checkin_date", ""))
+            try:
+                checkin = date.fromisoformat(checkin).strftime("%d/%m/%Y") if checkin else ""
+            except ValueError:
+                pass
             self.history_tree.insert("", "end", iid=str(index), values=(
                 record.get("source", "Agoda"), record.get("booking_id", ""),
                 record.get("guest_name", ""), record.get("room_type", ""),
-                record.get("checkin_date", ""), record.get("total_revenue", ""),
-            ))
+                checkin, record.get("total_revenue", ""),
+            ), tags=("even" if index % 2 == 0 else "odd",))
 
-    def copy_selected_history(self, _event: object = None) -> None:
+    def show_history_context_menu(self, event: tk.Event) -> str:
+        row_id = self.history_tree.identify_row(event.y)
+        if not row_id:
+            return "break"
+        if row_id not in self.history_tree.selection():
+            self.history_tree.selection_set(row_id)
+        self.history_tree.focus(row_id)
+        try:
+            self.history_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.history_menu.grab_release()
+        return "break"
+
+    def copy_selected_history(self, _event: object = None) -> str:
         selection = self.history_tree.selection()
         if not selection:
-            return
-        index = int(selection[0])
+            return "break"
         history = self.state.history()
-        if index >= len(history):
-            return
-        alert = BookingEvent.from_dict(history[index])
+        alerts: list[BookingEvent] = []
+        for item in selection:
+            index = int(item)
+            if index < len(history):
+                alerts.append(BookingEvent.from_dict(history[index]))
+        if alerts:
+            label = "Đã sao chép booking sang Excel" if len(alerts) == 1 else f"Đã sao chép {len(alerts)} booking sang Excel"
+            self._copy_alerts_to_clipboard(alerts, label)
+        return "break"
+
+    def copy_all_history(self) -> None:
+        alerts = [BookingEvent.from_dict(record) for record in self.state.history()]
+        if alerts:
+            self._copy_alerts_to_clipboard(alerts, f"Đã sao chép {len(alerts)} booking sang Excel")
+
+    def _copy_alerts_to_clipboard(self, alerts: list[BookingEvent], status: str) -> None:
         self.root.clipboard_clear()
-        self.root.clipboard_append(excel_tsv(alert))
-        self.set_status("Đã chép booking lịch sử")
+        self.root.clipboard_append(excel_tsv_rows(alerts))
+        self.root.update_idletasks()
+        self.set_status(status)
 
     def set_status(self, value: str) -> None:
         self.status_var.set(value)
+        lowered = value.lower()
+        if "lỗi" in lowered or "thất bại" in lowered or "không" in lowered:
+            color = self.COLORS["danger"]
+        elif "đang" in lowered or "yêu cầu" in lowered:
+            color = self.COLORS["warning"]
+        else:
+            color = self.COLORS["success"]
+        if hasattr(self, "status_label"):
+            self.status_label.configure(fg=color)
 
     def log(self, value: str) -> None:
         LOGGER.info(value)

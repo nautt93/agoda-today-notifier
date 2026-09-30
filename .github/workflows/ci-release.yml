@@ -64,7 +64,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Expedia dùng cùng cơ chế với Agoda: chỉ thông báo booking check-in hôm nay; chỉnh sửa và hủy ngày khác được xử lý âm thầm." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Giao diện premium mới, bố cục cấu hình rõ ràng và khôi phục chuột phải sao chép booking sang Excel." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:
