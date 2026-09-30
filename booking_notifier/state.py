@@ -71,14 +71,22 @@ class StateStore:
             self._save_locked()
             return int(record["attempts"])
 
-    def apply_event(self, event: BookingEvent, processed_keys: Iterable[str]) -> None:
-        """Apply the event and dedupe keys in one durable transaction."""
+    def apply_event(self, event: BookingEvent, processed_keys: Iterable[str]) -> set[date]:
+        """Apply the event atomically and return every check-in date it affects."""
         with self.lock:
             storage_id = event.storage_id
             bookings = self.data["bookings"]
             pending = self.data["pending_alerts"]
+            existing = dict(bookings.get(storage_id, {}))
+            affected_dates: set[date] = set()
+            old_checkin = self._record_checkin_date(existing)
+            if old_checkin:
+                affected_dates.add(old_checkin)
             if event.status == BOOKING_STATUS_CANCELLED:
-                existing = dict(bookings.get(storage_id, {}))
+                incoming = event.to_dict()
+                for field, value in incoming.items():
+                    if value not in (None, ""):
+                        existing[field] = value
                 existing.update({
                     "source": event.source,
                     "booking_id": event.booking_id,
@@ -93,8 +101,7 @@ class StateStore:
                     if self._record_storage_id(record) != storage_id
                 ]
             else:
-                existing = dict(bookings.get(storage_id, {}))
-                old_checkin = str(existing.get("checkin_date", ""))
+                old_checkin_text = str(existing.get("checkin_date", ""))
                 incoming = event.to_dict()
                 for field, value in incoming.items():
                     if value not in (None, ""):
@@ -102,7 +109,7 @@ class StateStore:
                 existing["status"] = "active"
                 existing["updated_at"] = _now()
                 new_checkin = str(existing.get("checkin_date", ""))
-                if old_checkin and new_checkin and old_checkin != new_checkin:
+                if old_checkin_text and new_checkin and old_checkin_text != new_checkin:
                     existing["alerted_for"] = ""
                     self.data["pending_alerts"] = [
                         record for record in pending
@@ -116,6 +123,9 @@ class StateStore:
                             if field_value not in (None, ""):
                                 record[field] = field_value
                 bookings[storage_id] = existing
+            new_checkin_date = self._record_checkin_date(existing)
+            if new_checkin_date:
+                affected_dates.add(new_checkin_date)
             existing_keys = list(self.data["processed_keys"])
             existing_set = set(existing_keys)
             for key in processed_keys:
@@ -126,6 +136,7 @@ class StateStore:
             for key in processed_keys:
                 self.data["parse_failures"].pop(key, None)
             self._save_locked()
+            return affected_dates
 
     def remember_processed_aliases(self, *keys: str) -> None:
         """Remember extra UID aliases for a Message-ID that was already committed."""
@@ -215,3 +226,11 @@ class StateStore:
         source = str(record.get("source", "Agoda")).lower()
         booking_id = str(record.get("booking_id", "")).upper()
         return f"{source}:{booking_id}"
+
+    @staticmethod
+    def _record_checkin_date(record: dict[str, Any]) -> date | None:
+        try:
+            raw = str(record.get("checkin_date", ""))
+            return date.fromisoformat(raw) if raw else None
+        except ValueError:
+            return None

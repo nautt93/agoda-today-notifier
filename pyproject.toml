@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "booking-checkin-hom-nay"
-version = "1.6.0"
+version = "1.6.1"
 description = "Windows notifier for Agoda and Expedia bookings checking in today"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,4 +35,3 @@ line-length = 120
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501"]
-

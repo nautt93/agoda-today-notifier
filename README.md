@@ -6,6 +6,7 @@
 
 - Đọc email Agoda và Expedia qua IMAP với TLS có xác minh chứng chỉ.
 - Xử lý đầy đủ booking mới, chỉnh sửa và hủy.
+- Agoda và Expedia dùng chung cơ chế: chỉ hiện cảnh báo cho booking check-in hôm nay; chỉnh sửa/hủy ngày khác được cập nhật âm thầm.
 - Lưu booking tương lai, không bỏ lỡ cảnh báo khi email đến trước ngày nhận phòng.
 - Phân biệt Expedia Collect và Hotel/Property Collect; ưu tiên đúng khoản tiền khách sạn thực nhận.
 - Hiển thị popup, phát âm thanh, lưu lịch sử và chép 9 cột sang Excel.

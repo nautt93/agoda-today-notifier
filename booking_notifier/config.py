@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -82,4 +82,3 @@ class ConfigStore:
         value = dict(DEFAULT_CONFIG)
         value.update({key: item for key, item in config.items() if key in DEFAULT_CONFIG})
         atomic_json_write(self.path, value)
-

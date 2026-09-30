@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from email.message import EmailMessage
 
 import pytest
 
@@ -21,6 +22,30 @@ Room Type Name: Deluxe King
 Payment Model: Expedia Collect
 Amount to Charge Expedia Group: VND 1,800,000
 """
+
+
+def test_agoda_and_expedia_use_the_same_booking_fields(expedia_message_factory):
+    agoda = EmailMessage()
+    agoda["From"] = "Agoda <booking@agoda.com>"
+    agoda["Subject"] = "New booking confirmation"
+    agoda["Date"] = "Wed, 30 Sep 2026 10:00:00 +0700"
+    agoda.set_content("""Agoda Booking ID: 987654321
+Guest Name: Jane Doe
+Check-in: 30/09/2026
+Check-out: 02/10/2026
+Room Type Name: Deluxe King
+Booked and Payable by Agoda: VND 1,800,000
+""")
+    expedia = parse_booking_message(expedia_message_factory(BASE))
+    parsed_agoda = parse_booking_message(agoda)
+    assert parsed_agoda is not None
+    assert expedia is not None
+    assert parsed_agoda.source == "Agoda"
+    assert expedia.source == "Expedia"
+    assert parsed_agoda.guest_name == expedia.guest_name == "Jane Doe"
+    assert parsed_agoda.room_type == expedia.room_type == "Deluxe King"
+    assert parsed_agoda.checkin_date == expedia.checkin_date == date(2026, 9, 30)
+    assert parsed_agoda.total_revenue == expedia.total_revenue == "VND 1,800,000"
 
 
 def test_expedia_happy_path(expedia_message_factory):
@@ -118,4 +143,3 @@ def test_spoofed_sender_is_rejected(expedia_message_factory):
 def test_subdomain_sender_is_accepted():
     assert sender_source("notify@mail.expediapartnercentral.com") == "Expedia"
     assert sender_source("notify@evil-expedia.com") == ""
-

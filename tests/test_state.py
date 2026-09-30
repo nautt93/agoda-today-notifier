@@ -43,9 +43,23 @@ def test_modification_moves_booking_to_new_date(tmp_path):
     state = StateStore(tmp_path / "state.json")
     state.apply_event(booking(date(2026, 10, 1)), ("uid:1", "msg:1"))
     assert len(state.queue_due_alerts(date(2026, 10, 1))) == 1
-    state.apply_event(booking(date(2026, 10, 2), BOOKING_STATUS_MODIFIED), ("uid:2", "msg:2"))
+    affected = state.apply_event(booking(date(2026, 10, 2), BOOKING_STATUS_MODIFIED), ("uid:2", "msg:2"))
+    assert affected == {date(2026, 10, 1), date(2026, 10, 2)}
     assert state.pending_for_date(date(2026, 10, 1)) == []
     assert len(state.queue_due_alerts(date(2026, 10, 2))) == 1
+
+
+def test_cancellation_without_date_reports_original_checkin(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    state.apply_event(booking(date(2026, 10, 1)), ("uid:1", "msg:1"))
+    cancelled = BookingEvent(
+        source="Expedia",
+        booking_id="123456789",
+        status=BOOKING_STATUS_CANCELLED,
+    )
+    affected = state.apply_event(cancelled, ("uid:2", "msg:2"))
+    assert affected == {date(2026, 10, 1)}
+    assert state.pending_for_date(date(2026, 10, 1)) == []
 
 
 def test_acknowledged_booking_alerts_only_once(tmp_path):
@@ -66,4 +80,3 @@ def test_event_and_processed_keys_are_persisted_together(tmp_path):
     assert reloaded.is_processed("uid:1", "missing")
     assert reloaded.is_processed("msg:1")
     assert len(reloaded.active_bookings()) == 1
-

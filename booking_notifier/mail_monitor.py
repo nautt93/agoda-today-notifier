@@ -32,6 +32,10 @@ def mailbox_message_key(identity_hash: str, message_id: str) -> str:
     return f"msg:{PARSER_STATE_VERSION}:{identity_hash}:{digest}"
 
 
+def lifecycle_affects_today(affected_dates: set[date], today: date | None = None) -> bool:
+    return (today or date.today()) in affected_dates
+
+
 def _response_bytes(payload: Any) -> bytes | None:
     if not payload:
         return None
@@ -165,12 +169,13 @@ class ImapMonitor(threading.Thread):
                     if attempts in {1, 5, 20}:
                         self.emit("log", "Có email từ kênh booking chưa đọc được; app sẽ tự thử lại.")
                     continue
-                self.state.apply_event(event, (uid_key, message_key))
+                affected_dates = self.state.apply_event(event, (uid_key, message_key))
                 processed_count += 1
-                if event.status == BOOKING_STATUS_CANCELLED:
+                affects_today = lifecycle_affects_today(affected_dates)
+                if event.status == BOOKING_STATUS_CANCELLED and affects_today:
                     self.emit("log", f"Đã hủy booking {event.source} {event.booking_id}; xóa cảnh báo chờ.")
                     self.emit("booking_cancelled", event)
-                elif event.status == BOOKING_STATUS_MODIFIED:
+                elif event.status == BOOKING_STATUS_MODIFIED and affects_today:
                     self.emit("log", f"Đã cập nhật booking {event.source} {event.booking_id}.")
                     self.emit("booking_modified", event)
         self._queue_due_alerts()
