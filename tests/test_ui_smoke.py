@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import tkinter as tk
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -10,8 +13,22 @@ from app import BookingNotifierApp
 from booking_notifier.models import BookingEvent
 
 
+def run_in_fresh_tk_process(node: str) -> bool:
+    # Windows Tcl can retain invalid initialization state after destroying its
+    # first root. Each real app launch owns one interpreter, so test that way too.
+    if os.environ.get("BOOKING_UI_SMOKE_CHILD") == "1":
+        return False
+    subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", f"{Path(__file__).resolve()}::{node}"],
+        env={**os.environ, "BOOKING_UI_SMOKE_CHILD": "1"}, check=True, timeout=60,
+    )
+    return True
+
+
 @pytest.mark.skipif(os.name != "nt", reason="The packaged desktop app targets Windows")
 def test_windows_ui_builds_with_excel_context_menu():
+    if run_in_fresh_tk_process("test_windows_ui_builds_with_excel_context_menu"):
+        return
     root = tk.Tk()
     root.withdraw()
     app = BookingNotifierApp(root)
@@ -43,6 +60,8 @@ def test_windows_ui_builds_with_excel_context_menu():
 @pytest.mark.skipif(os.name != "nt", reason="Real Windows popup")
 @pytest.mark.parametrize("source", ["Agoda", "Expedia"])
 def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, monkeypatch, source):
+    if run_in_fresh_tk_process(f"test_email_to_visible_popup_while_minimized_even_if_sound_fails[{source}]"):
+        return
     from email.message import EmailMessage
 
     import app as desktop
