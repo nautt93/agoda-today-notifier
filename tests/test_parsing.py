@@ -48,6 +48,49 @@ Booked and Payable by Agoda: VND 1,800,000
     assert parsed_agoda.total_revenue == expedia.total_revenue == "VND 1,800,000"
 
 
+def test_agoda_customer_info_and_room_summary_are_read_in_full():
+    message = EmailMessage()
+    message["From"] = "Agoda <booking@agoda.com>"
+    message["Subject"] = "New booking confirmation"
+    message["Date"] = "Wed, 30 Sep 2026 10:00:00 +0700"
+    message.set_content("New booking confirmation")
+    message.add_alternative("""<html><body>
+    <p>New booking confirmation</p>
+    <p>Agoda Booking ID: 707908051</p>
+    <table><tr><th>Customer Info</th><td>Name: NGUYEN VAN AN, Phone: +84 900 000 000</td></tr></table>
+    <p>Check-in: 30/09/2026</p><p>Check-out: 02/10/2026</p>
+    <p>Rooms:</p><p>2 x Deluxe Double Room</p><p>1 x Family Suite</p>
+    <p>Booked and Payable by Agoda: VND 1,031,040</p>
+    </body></html>""", subtype="html")
+
+    alert = parse_booking_message(message)
+
+    assert alert is not None
+    assert alert.guest_name == "NGUYEN VAN AN"
+    assert alert.room_type == "Deluxe Double Room x2; Family Suite"
+
+
+def test_agoda_separate_first_last_name_and_room_grid_are_supported():
+    message = EmailMessage()
+    message["From"] = "Agoda <booking@agoda.com>"
+    message["Subject"] = "New reservation confirmation"
+    message.set_content("fallback")
+    message.add_alternative("""<html><body>
+    <p>New reservation confirmation</p><p>Agoda Booking ID: 1780410606</p>
+    <table><tr><th>Customer First Name</th><td>Tuấn</td>
+    <th>Customer Last Name</th><td>Nguyễn</td></tr></table>
+    <p>Check-in: 30/09/2026</p><p>Check-out: 01/10/2026</p>
+    <table><tr><th>Room Type Name</th><th>No. of Rooms</th></tr>
+    <tr><td>Superior King</td><td>2 rooms</td></tr></table>
+    </body></html>""", subtype="html")
+
+    alert = parse_booking_message(message)
+
+    assert alert is not None
+    assert alert.guest_name == "Tuấn Nguyễn"
+    assert alert.room_type == "Superior King x2"
+
+
 def test_expedia_happy_path(expedia_message_factory):
     alert = parse_booking_message(expedia_message_factory(BASE))
     assert alert is not None

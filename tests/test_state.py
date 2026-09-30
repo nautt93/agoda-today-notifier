@@ -72,6 +72,32 @@ def test_acknowledged_booking_alerts_only_once(tmp_path):
     assert len(state.history()) == 1
 
 
+def test_parser_upgrade_repairs_history_without_alerting_again(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    incomplete = BookingEvent(
+        source="Agoda",
+        booking_id="707908051",
+        checkin_date=date(2026, 9, 30),
+        guest_name="NGUYEN",
+    )
+    state.apply_event(incomplete, ("uid:p4:1",))
+    state.acknowledge(state.queue_due_alerts(date(2026, 9, 30))[0])
+
+    repaired = BookingEvent(
+        source="Agoda",
+        booking_id="707908051",
+        checkin_date=date(2026, 9, 30),
+        guest_name="NGUYEN VAN AN",
+        room_type="Deluxe Double Room",
+    )
+    state.apply_event(repaired, ("uid:p5:1",))
+
+    history = state.history()
+    assert history[0]["guest_name"] == "NGUYEN VAN AN"
+    assert history[0]["room_type"] == "Deluxe Double Room"
+    assert state.queue_due_alerts(date(2026, 9, 30)) == []
+
+
 def test_event_and_processed_keys_are_persisted_together(tmp_path):
     path = tmp_path / "state.json"
     state = StateStore(path)

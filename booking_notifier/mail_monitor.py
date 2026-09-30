@@ -178,6 +178,8 @@ class ImapMonitor(threading.Thread):
                 elif event.status == BOOKING_STATUS_MODIFIED and affects_today:
                     self.emit("log", f"Đã cập nhật booking {event.source} {event.booking_id}.")
                     self.emit("booking_modified", event)
+        if processed_count:
+            self.emit("history_changed", None)
         self._queue_due_alerts()
         return processed_count
 

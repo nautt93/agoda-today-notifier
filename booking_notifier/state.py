@@ -11,7 +11,7 @@ from .config import STATE_PATH, atomic_json_write
 from .models import BOOKING_STATUS_CANCELLED, BookingEvent
 
 STATE_SCHEMA = 4
-PARSER_STATE_VERSION = "p4"
+PARSER_STATE_VERSION = "p5"
 
 
 def _now() -> str:
@@ -123,6 +123,7 @@ class StateStore:
                             if field_value not in (None, ""):
                                 record[field] = field_value
                 bookings[storage_id] = existing
+            self._repair_booking_details_locked(existing, storage_id)
             new_checkin_date = self._record_checkin_date(existing)
             if new_checkin_date:
                 affected_dates.add(new_checkin_date)
@@ -137,6 +138,33 @@ class StateStore:
                 self.data["parse_failures"].pop(key, None)
             self._save_locked()
             return affected_dates
+
+    def _repair_booking_details_locked(self, booking: dict[str, Any], storage_id: str) -> None:
+        """Enrich previously shown records after a parser upgrade without alerting twice."""
+        historical_checkins: set[str] = set()
+        for record in self.data["history"]:
+            if self._record_storage_id(record) != storage_id:
+                continue
+            historical_checkins.add(str(record.get("checkin_date", "")))
+            for field in ("guest_name", "room_type"):
+                incoming = str(booking.get(field, "")).strip()
+                current = str(record.get(field, "")).strip()
+                if incoming and (not current or len(incoming) > len(current)):
+                    record[field] = incoming
+            for field in ("total_revenue", "checkout_date", "subject", "sender", "received_at"):
+                if not record.get(field) and booking.get(field):
+                    record[field] = booking[field]
+
+        checkin = str(booking.get("checkin_date", ""))
+        if checkin and checkin in historical_checkins:
+            booking["alerted_for"] = checkin
+
+        for record in self.data["pending_alerts"]:
+            if self._record_storage_id(record) != storage_id:
+                continue
+            for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "subject", "sender", "received_at"):
+                if booking.get(field):
+                    record[field] = booking[field]
 
     def remember_processed_aliases(self, *keys: str) -> None:
         """Remember extra UID aliases for a Message-ID that was already committed."""

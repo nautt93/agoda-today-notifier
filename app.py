@@ -168,7 +168,7 @@ class BookingNotifierApp:
         if self._has_complete_config():
             self.start_monitoring()
         if self.config.get("start_minimized"):
-            self.root.after(200, self.root.iconify)
+            self.root.after(200, self._minimize_if_no_alert)
         self.root.after(3500, lambda: self.check_for_updates(silent=True))
 
     def _build_styles(self) -> None:
@@ -692,6 +692,8 @@ class BookingNotifierApp:
                     self.log(f"Đã ghi nhận booking {payload.booking_id}; sẽ báo sau 08:00.")
                 elif event_type in {"booking_cancelled", "booking_modified"}:
                     self._handle_booking_lifecycle(payload)
+                elif event_type == "history_changed":
+                    self.refresh_history()
                 elif event_type == "connection_test":
                     ok, text = payload
                     self.set_status(text)
@@ -747,6 +749,48 @@ class BookingNotifierApp:
         self.alert_queue.append(alert)
         if not self.active_alert:
             self._show_next_alert()
+
+    def _minimize_if_no_alert(self) -> None:
+        if not self.active_popup:
+            self.root.iconify()
+
+    def _present_alert_popup(self, popup: tk.Toplevel) -> None:
+        """Restore the app and reliably bring a new booking alert to the foreground."""
+        try:
+            if self.root.state() in {"iconic", "withdrawn"}:
+                self.root.deiconify()
+            self.root.lift()
+            popup.deiconify()
+            popup.update_idletasks()
+            popup.attributes("-topmost", True)
+            popup.lift()
+            popup.focus_force()
+        except tk.TclError:
+            LOGGER.exception("Không thể đưa popup booking lên trước")
+
+        if os.name == "nt":
+            try:
+                import ctypes
+                from ctypes import wintypes
+
+                hwnd = popup.winfo_id()
+                user32 = ctypes.windll.user32
+                user32.ShowWindow.argtypes = (wintypes.HWND, ctypes.c_int)
+                user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+            except (AttributeError, OSError, ValueError, tk.TclError):
+                LOGGER.exception("Windows không thể ưu tiên popup booking")
+
+        def reinforce_focus() -> None:
+            try:
+                if popup.winfo_exists():
+                    popup.lift()
+                    popup.focus_force()
+            except tk.TclError:
+                pass
+
+        popup.after(250, reinforce_focus)
 
     def _show_next_alert(self) -> None:
         if self.active_alert or not self.alert_queue:
@@ -833,8 +877,7 @@ class BookingNotifierApp:
         popup.bind("<Button-2>", self.show_active_context_menu)
         popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
         popup.protocol("WM_DELETE_WINDOW", self.acknowledge_alert)
-        popup.lift()
-        popup.focus_force()
+        self._present_alert_popup(popup)
         self.play_sound()
         if self.config.get("f92_enabled", True):
             self.f92_worker.notify(alert)
