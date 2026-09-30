@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.2",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.2/Booking-Checkin-Hom-Nay-1.7.2.exe",
-  "sha256": "9f607c67e519c832200d57d893bda5778648c484e3998fc805b869950bf069d1",
-  "size": 23744923,
-  "notes": "Sửa nhận diện booking Agoda và ngày check-in, tiếp tục quét khi gặp email lỗi; khôi phục lịch tháng và đồng hồ F92 tự cập nhật mỗi phút.",
-  "signature": "TB9eBDNVZ9a12b2y7dRVnRKW+icEie/vcEa8XbIpij0OtiUMu4M91YNSMoFgyKGnY4c9CSiglqEjC8VX7GC4AQ=="
+  "version": "1.7.3",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.3/Booking-Checkin-Hom-Nay-1.7.3.exe",
+  "sha256": "a73fafaec55591473885101fe3f7288081f4e924f4eacd8e9b1ae6e88feeb277",
+  "size": 23750287,
+  "notes": "Sửa OTA tải xong bị thoát: chờ bộ cập nhật sẵn sàng, mở lại ứng dụng và xác nhận khởi động. Khôi phục đúng 9 cột Excel bản 1.5.5: STT trống, tên khách, ngày đến, ngày đi, số đêm, tiền dạng số, hai ô trống, nguồn và hạng phòng.",
+  "signature": "ndWsW8TWkViJRez+l35UD8Lul8aEa1yABmZqK7T6uxI5bDCqRA5k1jNeVlySnP2uot5m9rFycDZMKYd3H64OCA=="
 }
