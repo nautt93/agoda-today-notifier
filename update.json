@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.3",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.3/Booking-Checkin-Hom-Nay-1.7.3.exe",
-  "sha256": "a73fafaec55591473885101fe3f7288081f4e924f4eacd8e9b1ae6e88feeb277",
-  "size": 23750287,
-  "notes": "Sửa OTA tải xong bị thoát: chờ bộ cập nhật sẵn sàng, mở lại ứng dụng và xác nhận khởi động. Khôi phục đúng 9 cột Excel bản 1.5.5: STT trống, tên khách, ngày đến, ngày đi, số đêm, tiền dạng số, hai ô trống, nguồn và hạng phòng.",
-  "signature": "ndWsW8TWkViJRez+l35UD8Lul8aEa1yABmZqK7T6uxI5bDCqRA5k1jNeVlySnP2uot5m9rFycDZMKYd3H64OCA=="
+  "version": "1.7.4",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.4/Booking-Checkin-Hom-Nay-1.7.4.exe",
+  "sha256": "a73db0d6fca4baf293dbdee34d4247b870b79e4202b281b9f0bde62b06422123",
+  "size": 23756677,
+  "notes": "Khôi phục cơ chế nhận thư 1.5.5: chỉ đọc 500 thư gần nhất, đọc thư mới trước, báo ngay booking check-in hôm nay; thêm mẫu Expedia. Không quét toàn bộ hộp thư, không tự nhắc booking ngày khác. Sửa ngày check-in nằm giữa dòng và khôi phục MP3; lỗi âm thanh không đóng popup.",
+  "signature": "dCOkh5WJoAxZrJAwbsKseOjpSeKF3sGy3owEDd4Kikgp/IQr/+L782MpmhUQlCIUH3TthPqC7hBHXelEzvxfBw=="
 }
