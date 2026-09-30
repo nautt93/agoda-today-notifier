@@ -177,8 +177,8 @@ class BookingNotifierApp:
             style.theme_use("clam")
         except tk.TclError:
             pass
-        self.root.option_add("*Font", "Segoe UI 10")
-        self.root.option_add("*Menu.Font", "Segoe UI 10")
+        self.root.option_add("*Font", "{Segoe UI} 10")
+        self.root.option_add("*Menu.Font", "{Segoe UI} 10")
         style.configure("TFrame", background=self.COLORS["bg"])
         style.configure("Card.TFrame", background=self.COLORS["surface"])
         style.configure("Alt.TFrame", background=self.COLORS["surface_alt"])
