@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.6.1",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.6.1/Booking-Checkin-Hom-Nay-1.6.1.exe",
-  "sha256": "1179d0ad983cc5a6dded9695c78dc8b7f5875fb0d5254235de1775bd5b0b1b3e",
-  "size": 23711433,
-  "notes": "Expedia dùng cùng cơ chế với Agoda: chỉ thông báo booking check-in hôm nay; chỉnh sửa và hủy ngày khác được xử lý âm thầm.",
-  "signature": "4THCPct4FLKP+OIauYBh+56dezzI1O/5Ezl2d/8OLUJIB0zUA+nk8OkLmLbjdFF8xQN+hwQCcm8PB1eCrJ6iDQ=="
+  "version": "1.7.0",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.0/Booking-Checkin-Hom-Nay-1.7.0.exe",
+  "sha256": "d623b5f1fdec1bea6c0a8cbb70416e9855cc3ccaa109972b6d157f2f4ee5b0a3",
+  "size": 23731013,
+  "notes": "Giao diện premium mới, bố cục cấu hình rõ ràng và khôi phục chuột phải sao chép booking sang Excel.",
+  "signature": "4VEF+mVa/v+ZTT39Ufc8l8pQvj9SpVJtN96WsNPYhyq4wrk9NCQpKEWtinTJOsiBHsLMhem+eDxZRlHiCN8LBQ=="
 }
