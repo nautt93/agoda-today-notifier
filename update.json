@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.1",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.1/Booking-Checkin-Hom-Nay-1.7.1.exe",
-  "sha256": "828825cc85eeea0a4c7338f41474c455402f327aeb23890f6f866ecfbc339544",
-  "size": 23739112,
-  "notes": "Hiển thị đầy đủ tên khách và hạng phòng Agoda, tự sửa dữ liệu lịch sử, đồng thời khôi phục popup luôn nổi khi ứng dụng đang thu nhỏ.",
-  "signature": "8sAy5l63AyACxdeqLL0hZyxGYco+ycK3j2PUe3Y356zOwctTfjiUi66pY+0GN4Maz0e+q2NbQlJwpWY06n4VBQ=="
+  "version": "1.7.2",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.2/Booking-Checkin-Hom-Nay-1.7.2.exe",
+  "sha256": "9f607c67e519c832200d57d893bda5778648c484e3998fc805b869950bf069d1",
+  "size": 23744923,
+  "notes": "Sửa nhận diện booking Agoda và ngày check-in, tiếp tục quét khi gặp email lỗi; khôi phục lịch tháng và đồng hồ F92 tự cập nhật mỗi phút.",
+  "signature": "TB9eBDNVZ9a12b2y7dRVnRKW+icEie/vcEa8XbIpij0OtiUMu4M91YNSMoFgyKGnY4c9CSiglqEjC8VX7GC4AQ=="
 }
