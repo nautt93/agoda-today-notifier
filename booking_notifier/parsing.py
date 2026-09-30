@@ -145,11 +145,14 @@ class _TableParser(HTMLParser):
         self.rows: list[list[str]] = []
         self.row: list[str] | None = None
         self.cell: list[str] | None = None
+        self.parents: list[tuple[list[str] | None, list[str] | None]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.lower()
         if tag == "tr":
+            self.parents.append((self.row, self.cell))
             self.row = []
+            self.cell = None
         elif tag in {"td", "th"} and self.row is not None:
             self.cell = []
         elif tag == "br" and self.cell is not None:
@@ -167,7 +170,7 @@ class _TableParser(HTMLParser):
         elif tag == "tr" and self.row is not None:
             if any(self.row):
                 self.rows.append(self.row)
-            self.row = None
+            self.row, self.cell = self.parents.pop() if self.parents else (None, None)
 
 
 def html_to_text(value: str) -> str:
@@ -193,7 +196,10 @@ def message_body_text(message: Message) -> str:
             value = part.get_content()
         except Exception:
             payload = part.get_payload(decode=True) or b""
-            value = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+            try:
+                value = payload.decode(part.get_content_charset() or "utf-8", errors="replace")
+            except LookupError:
+                value = payload.decode("utf-8", errors="replace")
         text = str(value)
         parts.append(html_to_text(text) if content_type == "text/html" else text)
     return "\n\n".join(parts)
@@ -211,7 +217,10 @@ def message_table_rows(message: Message) -> list[list[str]]:
             value = str(part.get_content())
         except Exception:
             raw = part.get_payload(decode=True) or b""
-            value = raw.decode(part.get_content_charset() or "utf-8", errors="replace")
+            try:
+                value = raw.decode(part.get_content_charset() or "utf-8", errors="replace")
+            except LookupError:
+                value = raw.decode("utf-8", errors="replace")
         parser = _TableParser()
         try:
             parser.feed(value)
@@ -246,6 +255,8 @@ def _event_status(subject: str, body: str) -> str:
         return BOOKING_STATUS_CANCELLED
     if re.search(r"\b(?:cancelled|canceled|cancellation)\b", subject_n) and "policy" not in subject_n:
         return BOOKING_STATUS_CANCELLED
+    if re.search(r"\b(?:huy (?:dat phong|booking)|(?:dat phong|booking).*da huy)\b", subject_n):
+        return BOOKING_STATUS_CANCELLED
     modification_patterns = (
         r"\b(?:booking|reservation)(?: status)?\s*[:\-]?\s*(?:has been |was |is )?(?:modified|updated|changed|amended)\b",
         r"\bnotification type\s*[:\-]?\s*(?:booking )?(?:modified|modification|amended)\b",
@@ -275,15 +286,15 @@ def extract_booking_id(text: str, subject: str = "") -> str:
 
 
 def parse_date(value: str, source: str = "") -> date | None:
-    raw = normalized(value)
+    raw = normalized(value).translate(str.maketrans({"–": "-", "‐": "-", "‑": "-", "−": "-"}))
     match = re.search(r"\b(20\d{2})[./-](\d{1,2})[./-](\d{1,2})\b", raw)
     if match:
         return _safe_date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
     month_names = "|".join(sorted(MONTHS, key=len, reverse=True))
-    match = re.search(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s+({month_names})\.?\s*,?\s*(20\d{{2}})\b", raw)
+    match = re.search(rf"\b(\d{{1,2}})(?:st|nd|rd|th)?[\s/-]+({month_names})\.?[\s,/-]+(20\d{{2}})\b", raw)
     if match:
         return _safe_date(int(match.group(3)), MONTHS[match.group(2)], int(match.group(1)))
-    match = re.search(rf"\b({month_names})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?\s*,?\s*(20\d{{2}})\b", raw)
+    match = re.search(rf"\b({month_names})\.?[\s/-]+(\d{{1,2}})(?:st|nd|rd|th)?[\s,/-]+(20\d{{2}})\b", raw)
     if match:
         return _safe_date(int(match.group(3)), MONTHS[match.group(1)], int(match.group(2)))
     match = re.search(r"\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b", raw)
@@ -298,6 +309,9 @@ def parse_date(value: str, source: str = "") -> date | None:
         else:
             day, month = first, second
         return _safe_date(year, month, day)
+    match = re.search(r"\b(\d{1,2})\s+thang\s+(\d{1,2})(?:\s+nam)?\s+(20\d{2})\b", raw)
+    if match:
+        return _safe_date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
     return None
 
 
@@ -346,17 +360,30 @@ def _text_value(text: str, labels: Iterable[str], max_length: int = 180) -> str:
 
 
 def _date_by_labels(text: str, rows: Sequence[Sequence[str]], labels: Sequence[str], source: str) -> date | None:
-    table_value = _row_value(rows, labels)
-    parsed = parse_date(table_value, source)
-    if parsed:
-        return parsed
+    # A horizontal header row (Check-in | Check-out) has values BELOW each label.
+    wanted = {normalized(label) for label in labels}
+    date_headers = {normalized(label) for label in CHECKIN_LABELS + CHECKOUT_LABELS}
+    for row_index, row in enumerate(rows):
+        for column, cell in enumerate(row):
+            label, _, inline = cell.partition(":")
+            if normalized(label) not in wanted:
+                continue
+            candidates = [inline] if inline.strip() else []
+            if column + 1 < len(row) and normalized(row[column + 1]) not in date_headers:
+                candidates.append(row[column + 1])
+            if row_index + 1 < len(rows) and column < len(rows[row_index + 1]):
+                candidates.append(rows[row_index + 1][column])
+            for candidate in candidates:
+                parsed = parse_date(candidate, source)
+                if parsed:
+                    return parsed
+    text = text.translate(str.maketrans({"–": "-", "‑": "-", "−": "-"}))
     for label in labels:
-        match = re.search(
+        for match in re.finditer(
             rf"(?:^|\n)\s*{re.escape(label)}\s*[:\-]?\s*(?:\n\s*)?([^\r\n]{{1,100}})",
             text,
             re.IGNORECASE,
-        )
-        if match:
+        ):
             parsed = parse_date(match.group(1), source)
             if parsed:
                 return parsed
@@ -723,8 +750,11 @@ def parse_booking_message(message: Message) -> BookingEvent | None:
             "new reservation", "new booking", "reservation confirmation", "booking confirmation",
             "reservation notification", "booking notification", "confirmed reservation",
             "reservation confirmed", "booking confirmed", "status confirmed", "status booked",
+            "xac nhan dat phong", "dat phong moi", "thong bao dat phong",
         )
-        if not checkin or not any(term in searchable for term in booking_terms):
+        # The original Agoda reader accepted trusted messages with a booking ID
+        # and a labelled arrival date. Localised vouchers need no English title.
+        if not checkin or (source != "Agoda" and not any(term in searchable for term in booking_terms)):
             return None
     received_at = str(message.get("Date", ""))
     try:

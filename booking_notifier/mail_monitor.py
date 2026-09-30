@@ -104,9 +104,13 @@ class ImapMonitor(threading.Thread):
         port = int(self.config.get("imap_port", 993))
         address = str(self.config["email_address"]).strip()
         scan_days = min(365, max(1, int(self.config.get("scan_days", 90))))
-        since = (date.today() - timedelta(days=scan_days)).strftime("%d-%b-%Y")
+        since_date = date.today() - timedelta(days=scan_days)
+        months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+        since = f"{since_date.day:02d}-{months[since_date.month - 1]}-{since_date.year}"
         tls_context = ssl.create_default_context()
         processed_count = 0
+        failed_count = 0
+        self.emit("status", "Đang quét hộp thư Agoda + Expedia…")
         with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
             client.login(address, self.password)
             status, _ = client.select("INBOX", readonly=True)
@@ -162,15 +166,26 @@ class ImapMonitor(threading.Thread):
                     # This message was copied/moved to a new UID; remember the alias to avoid downloading it again.
                     self.state.remember_processed_aliases(uid_key)
                     continue
-                message = message_from_bytes(raw, policy=policy.default)
-                event = parse_booking_message(message)
+                try:
+                    message = message_from_bytes(raw, policy=policy.default)
+                    event = parse_booking_message(message)
+                except Exception:
+                    LOGGER.exception("Cannot parse booking email UID %s", uid)
+                    failed_count += 1
+                    self.state.record_parse_failure(message_key, "Lỗi đọc nội dung email")
+                    self.emit("log", f"Email UID {uid}: lỗi đọc nội dung; đang tiếp tục email khác.")
+                    continue
                 if event is None:
+                    failed_count += 1
                     attempts = self.state.record_parse_failure(message_key, "Mẫu email booking chưa đọc đủ dữ liệu")
                     if attempts in {1, 5, 20}:
-                        self.emit("log", "Có email từ kênh booking chưa đọc được; app sẽ tự thử lại.")
+                        self.emit("log", f"Email UID {uid}: chưa đọc đủ mã booking/ngày check-in hoặc chưa nhận diện được mẫu xác nhận; sẽ thử lại.")
                     continue
                 affected_dates = self.state.apply_event(event, (uid_key, message_key))
                 processed_count += 1
+                if event.status not in {BOOKING_STATUS_CANCELLED, BOOKING_STATUS_MODIFIED}:
+                    day = event.checkin_date.isoformat() if event.checkin_date else "chưa đọc được"
+                    self.emit("log", f"Đã đọc {event.source} {event.booking_id}: check-in {day}.")
                 affects_today = lifecycle_affects_today(affected_dates)
                 if event.status == BOOKING_STATUS_CANCELLED and affects_today:
                     self.emit("log", f"Đã hủy booking {event.source} {event.booking_id}; xóa cảnh báo chờ.")
@@ -181,6 +196,8 @@ class ImapMonitor(threading.Thread):
         if processed_count:
             self.emit("history_changed", None)
         self._queue_due_alerts()
+        self.emit("log", f"Quét xong: {processed_count} email đã xử lý; {failed_count} email chưa đọc được; "
+                  f"{len(self.state.pending_for_date(date.today()))} booking hôm nay chờ xác nhận.")
         return processed_count
 
 

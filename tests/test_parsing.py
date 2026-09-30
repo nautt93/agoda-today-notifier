@@ -186,3 +186,41 @@ def test_spoofed_sender_is_rejected(expedia_message_factory):
 def test_subdomain_sender_is_accepted():
     assert sender_source("notify@mail.expediapartnercentral.com") == "Expedia"
     assert sender_source("notify@evil-expedia.com") == ""
+
+
+@pytest.mark.parametrize("arrival", ["30-Sep-2026", "30/September/2026", "30 tháng 9 năm 2026", "30‑Sep‑2026"])
+def test_agoda_additional_arrival_dates(arrival):
+    assert parse_date(arrival, "Agoda") == date(2026, 9, 30)
+
+
+def test_agoda_localized_voucher_nested_html_and_horizontal_dates():
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Agoda – Phiếu đặt phòng 987654321"
+    message.set_content("Vui lòng xem nội dung HTML")
+    message.add_alternative("""<table><tr><td><table>
+    <tr><td>Agoda Booking ID: 987654321</td></tr>
+    <tr><th>Check-in</th><th>Check-out</th></tr>
+    <tr><td>30-Sep-2026</td><td>02-Oct-2026</td></tr>
+    </table></td><td>Guest Name: Nguyen Van An</td></tr></table>""", subtype="html")
+    event = parse_booking_message(message)
+    assert event is not None
+    assert event.checkin_date == date(2026, 9, 30)
+    assert event.checkout_date == date(2026, 10, 2)
+
+
+def test_agoda_unknown_charset_does_not_block_booking():
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Agoda voucher"
+    message["Content-Type"] = 'text/plain; charset="unknown-charset"'
+    message.set_payload("Booking ID: 987654321\nCheck-in: 30-Sep-2026\nGuest Name: Jane Doe")
+    assert parse_booking_message(message).checkin_date == date(2026, 9, 30)
+
+
+def test_agoda_vietnamese_cancellation_does_not_become_new_booking():
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Hủy đặt phòng Agoda"
+    message.set_content("Booking ID: 987654321\nCheck-in: 30-Sep-2026")
+    assert parse_booking_message(message).status == BOOKING_STATUS_CANCELLED

@@ -154,6 +154,7 @@ class BookingNotifierApp:
         self.active_popup: tk.Toplevel | None = None
         self.queued_ids: set[str] = set()
         self.sound_active = False
+        self.f92_clock_job: str | None = None
         self._build_styles()
         self._build_ui()
         self._load_config()
@@ -162,6 +163,7 @@ class BookingNotifierApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(150, self._drain_events)
         self.root.after(1000, self._minute_tick)
+        self.f92_clock_job = self.root.after(1500, self._f92_clock_tick)
         self.refresh_history()
         for alert in self.state.pending_for_date(date.today()):
             self.enqueue_alert(alert)
@@ -569,6 +571,7 @@ class BookingNotifierApp:
             self.config_store.save(self.config)
             set_start_with_windows(bool(self.config["start_with_windows"]))
             self.f92_worker.configure(self.config)
+            self._restore_f92_display()
             self.start_monitoring()
             self.log("Đã lưu cấu hình an toàn và khởi động theo dõi.")
         except Exception as exc:
@@ -704,6 +707,8 @@ class BookingNotifierApp:
                     self.log(f"F92: {payload}")
                 elif event_type == "f92_test_result":
                     ok, text = payload
+                    if ok:
+                        self._restore_f92_display()
                     (messagebox.showinfo if ok else messagebox.showerror)("Kiểm tra F92", text, parent=self.root)
                 elif event_type == "update_result":
                     info, silent, error = payload
@@ -719,13 +724,35 @@ class BookingNotifierApp:
                     self._start_monitor_generation(*payload)
         except queue.Empty:
             pass
-        self.root.after(180, self._drain_events)
+        except Exception:
+            LOGGER.exception("UI event failed; keeping notification loop alive")
+            self.set_status("Lỗi hiển thị – xem Nhật ký; ứng dụng sẽ tiếp tục thử")
+        finally:
+            self.root.after(180, self._drain_events)
 
     def _minute_tick(self) -> None:
-        if not (self.quiet_var.get() and is_quiet_hours()):
-            for alert in self.state.pending_for_date(date.today()):
-                self.enqueue_alert(alert)
-        self.root.after(30_000, self._minute_tick)
+        try:
+            if not (self.quiet_var.get() and is_quiet_hours()):
+                for alert in self.state.pending_for_date(date.today()):
+                    self.enqueue_alert(alert)
+        except Exception:
+            LOGGER.exception("Cannot show pending alerts; will retry")
+        finally:
+            self.root.after(30_000, self._minute_tick)
+
+    def _restore_f92_display(self) -> None:
+        if self.active_alert:
+            self.f92_worker.notify(self.active_alert, play_sound=False)
+        elif not self.alert_queue:
+            self.f92_worker.idle()
+
+    def _f92_clock_tick(self) -> None:
+        self.f92_clock_job = None
+        if not self.active_alert and not self.alert_queue:
+            self.f92_worker.idle()
+        now = datetime.now()
+        delay = max(1000, 60_000 - now.second * 1000 - now.microsecond // 1000)
+        self.f92_clock_job = self.root.after(delay, self._f92_clock_tick)
 
     def _handle_booking_lifecycle(self, event: BookingEvent) -> None:
         self.alert_queue = [item for item in self.alert_queue if item.storage_id != event.storage_id]
@@ -748,7 +775,18 @@ class BookingNotifierApp:
         self.queued_ids.add(alert.storage_id)
         self.alert_queue.append(alert)
         if not self.active_alert:
-            self._show_next_alert()
+            try:
+                self._show_next_alert()
+            except Exception:
+                # Keep the persisted pending event retryable after a Tk/audio error.
+                failed_alert = self.active_alert or alert
+                if self.active_popup:
+                    self.active_popup.destroy()
+                self.active_popup = None
+                self.active_alert = None
+                self.queued_ids.discard(failed_alert.storage_id)
+                self.alert_queue = [item for item in self.alert_queue if item.storage_id != failed_alert.storage_id]
+                raise
 
     def _minimize_if_no_alert(self) -> None:
         if not self.active_popup:
@@ -794,6 +832,8 @@ class BookingNotifierApp:
 
     def _show_next_alert(self) -> None:
         if self.active_alert or not self.alert_queue:
+            if not self.active_alert and not self.alert_queue:
+                self.f92_worker.idle()
             return
         alert = self.alert_queue.pop(0)
         self.active_alert = alert
@@ -938,8 +978,6 @@ class BookingNotifierApp:
             self.active_popup.destroy()
             self.active_popup = None
         self.refresh_history()
-        if self.config.get("f92_enabled", True):
-            self.f92_worker.idle()
         self._show_next_alert()
 
     def refresh_history(self) -> None:
@@ -1020,6 +1058,8 @@ class BookingNotifierApp:
         self.log("Ứng dụng vẫn chạy nền. Mở lại từ Taskbar và bấm Thoát để kết thúc.")
 
     def exit_app(self) -> None:
+        if self.f92_clock_job is not None:
+            self.root.after_cancel(self.f92_clock_job)
         self.monitor_generation += 1
         if self.monitor:
             self.monitor.stop()

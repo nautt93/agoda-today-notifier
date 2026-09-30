@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import queue
 import ssl
 from datetime import date
+from email.message import EmailMessage
 
 import pytest
 
@@ -62,3 +64,60 @@ def test_imap_connection_requires_verified_tls(monkeypatch):
     assert captured["context"].verify_mode == ssl.CERT_REQUIRED
     assert captured["context"].check_hostname is True
     assert captured["timeout"] == 30
+
+
+def test_agoda_email_to_pending_alert_survives_bad_email_and_deduplicates(tmp_path, monkeypatch):
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Agoda voucher"
+    message["Message-ID"] = "<agoda-new@example>"
+    message.set_content(f"Booking ID: 987654321\nCheck-in: {date.today().isoformat()}\nGuest Name: Jane Doe")
+    raw = message.as_bytes()
+    bad = raw.replace(b"<agoda-new@example>", b"<bad@example>")
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def login(self, *args):
+            pass
+
+        def select(self, *args, **kwargs):
+            return "OK", [b"2"]
+
+        def response(self, *args):
+            return "OK", [b"123"]
+
+        def uid(self, command, *args):
+            if command == "search":
+                return "OK", [b"1 2"]
+            return "OK", [(b"BODY[]", bad if args[0] == b"1" else raw)]
+
+    parse = mail_monitor.parse_booking_message
+
+    def parse_with_bad_message(message):
+        if message["Message-ID"] == "<bad@example>":
+            raise ValueError("broken template")
+        return parse(message)
+
+    monkeypatch.setattr(mail_monitor.imaplib, "IMAP4_SSL", FakeClient)
+    monkeypatch.setattr(mail_monitor, "parse_booking_message", parse_with_bad_message)
+    state = StateStore(tmp_path / "state.json")
+    events = queue.Queue()
+    monitor = mail_monitor.ImapMonitor(
+        {"imap_host": "example.com", "email_address": "hotel@example.com", "quiet_hours_enabled": False},
+        "secret", state, events,
+    )
+    assert monitor.scan_mailbox() == 1
+    emitted = list(events.queue)
+    assert [payload.booking_id for kind, payload in emitted if kind == "alert"] == ["987654321"]
+    assert len(state.pending_for_date(date.today())) == 1
+    state.acknowledge(state.pending_for_date(date.today())[0])
+    assert monitor.scan_mailbox() == 0
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 1

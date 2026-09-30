@@ -12,6 +12,8 @@
 - Hiển thị popup, phát âm thanh, lưu lịch sử và chép 9 cột sang Excel.
 - Giao diện desktop tối–vàng cao cấp; nhấp đúp, Ctrl+C hoặc chuột phải để sao chép một/nhiều booking sang Excel.
 - Hỗ trợ màn hình/loa F92 qua USB serial.
+- F92 hiển thị lịch tháng và đồng hồ khi chờ, cập nhật mỗi phút; giữ màn hình booking cho đến khi xác nhận.
+- Nhật ký ghi mã booking/ngày check-in và UID email chưa đọc được để kiểm tra các mẫu email mới.
 - OTA dùng HTTPS, SHA-256 và chữ ký Ed25519 độc lập; updater tự rollback khi thay thế thất bại.
 - Mật khẩu ứng dụng được mã hóa bằng Windows DPAPI.
 

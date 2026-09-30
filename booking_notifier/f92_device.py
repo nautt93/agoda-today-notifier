@@ -176,9 +176,9 @@ class F92Client:
         self.send_framebuffer(image_to_rgb565_le(render_idle_image(now)))
         return "màn hình chờ Moonlight"
 
-    def notify(self, alert: object | Mapping[str, Any]) -> str:
+    def notify(self, alert: object | Mapping[str, Any], play_sound: bool = True) -> str:
         self.send_framebuffer(render_booking_rgb565(alert))
-        if self.settings.builtin_sound_enabled:
+        if play_sound and self.settings.builtin_sound_enabled:
             self.play_sound()
         return "màn hình màu"
 
@@ -199,18 +199,21 @@ class F92Worker(threading.Thread):
         self.operations: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.stop_event = threading.Event()
         self.client = F92Client(self.settings, self.stop_event)
+        self.idle_pending = threading.Event()
 
     def configure(self, settings: F92Settings | Mapping[str, Any]) -> None:
         self.operations.put(("configure", settings))
 
-    def notify(self, alert: object | Mapping[str, Any]) -> None:
-        self.operations.put(("notify", alert))
+    def notify(self, alert: object | Mapping[str, Any], play_sound: bool = True) -> None:
+        self.operations.put(("notify", (alert, play_sound)))
 
     def test(self) -> None:
         self.operations.put(("test", None))
 
     def idle(self) -> None:
-        self.operations.put(("idle", None))
+        if not self.idle_pending.is_set():
+            self.idle_pending.set()
+            self.operations.put(("idle", None))
 
     def close(self, timeout: float = 3.0) -> None:
         self.stop_event.set()
@@ -230,9 +233,11 @@ class F92Worker(threading.Thread):
                     self.client.settings = self.settings
                     self.event_queue.put(("f92_status", "F92: đã cập nhật cấu hình"))
                 elif not self.settings.enabled:
-                    self.event_queue.put(("f92_status", "F92: đã tắt"))
+                    if operation == "test":
+                        self.event_queue.put(("f92_test_result", (False, "F92 đang tắt trong cấu hình.")))
                 elif operation == "notify":
-                    mode = self.client.notify(payload)
+                    alert, play_sound = payload
+                    mode = self.client.notify(alert, play_sound=play_sound)
                     self.event_queue.put(("f92_status", f"F92: đã báo booking bằng {mode}."))
                 elif operation == "test":
                     port = self.client.test_device()
@@ -241,8 +246,11 @@ class F92Worker(threading.Thread):
                     mode = self.client.show_idle()
                     self.event_queue.put(("f92_status", f"F92: đã về {mode}."))
             except Exception as exc:
+                self.client.close()
                 self.event_queue.put(("f92_error", str(exc)))
                 if operation == "test":
                     self.event_queue.put(("f92_test_result", (False, str(exc))))
+            finally:
+                if operation == "idle":
+                    self.idle_pending.clear()
         self.client.close()
-

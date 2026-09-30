@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -103,21 +103,44 @@ def render_booking_image(alert: object | Mapping[str, Any]) -> Image.Image:
     return image
 
 
+def month_grid(current: date) -> list[list[date]]:
+    first = current.replace(day=1)
+    start = first - timedelta(days=first.weekday())
+    return [[start + timedelta(days=week * 7 + day) for day in range(7)] for week in range(6)]
+
+
+def _centered(draw: ImageDraw.ImageDraw, center: tuple[int, int], text: str, size: int, color: str) -> None:
+    font = _font(size, True)
+    left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+    draw.text((center[0] - (right - left) / 2 - left, center[1] - (bottom - top) / 2 - top),
+              text, font=font, fill=color)
+
+
 def render_idle_image(now: datetime | None = None) -> Image.Image:
     current = now or datetime.now()
     image = _background()
     draw = ImageDraw.Draw(image)
-    draw.text((26, 40), "MOONLIGHT", font=_font(32, True), fill="#FFD985")
-    draw.text((26, 78), "HOTEL", font=_font(23, True), fill="#FFFFFF")
-    time_text = current.strftime("%H:%M")
-    bbox = draw.textbbox((0, 0), time_text, font=_font(66, True))
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) / 2, 145), time_text, font=_font(66, True), fill="#FFFFFF")
-    date_text = current.strftime("%d/%m/%Y")
-    bbox = draw.textbbox((0, 0), date_text, font=_font(24, True))
-    draw.text(((WIDTH - (bbox[2] - bbox[0])) / 2, 232), date_text, font=_font(24, True), fill="#A9CCE8")
-    draw.rounded_rectangle((28, 350, 292, 414), radius=18, fill="#103C45", outline="#21AE78")
-    draw.ellipse((48, 370, 62, 384), fill="#55E3B4")
-    draw.text((76, 365), "Đang theo dõi booking", font=_font(17, True), fill="#FFFFFF")
+    _centered(draw, (160, 35), "MOONLIGHT HOTEL", 22, "#FFD985")
+    _centered(draw, (160, 105), current.strftime("%H:%M"), 66, "#FFFFFF")
+    weekdays = ("Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật")
+    _centered(draw, (160, 162), f"{weekdays[current.weekday()]}, {current:%d/%m/%Y}", 18, "#A9CCE8")
+    draw.rounded_rectangle((18, 194, 302, 431), radius=20, fill="#F6F8FC")
+    _centered(draw, (160, 219), f"THÁNG {current.month}  •  {current.year}", 18, "#172A42")
+    draw.line((35, 239, 285, 239), fill="#D7E4ED")
+    for column, label in enumerate(("T2", "T3", "T4", "T5", "T6", "T7", "CN")):
+        _centered(draw, (52 + 36 * column, 253), label, 12, "#C34040" if column == 6 else "#697386")
+    today = current.date()
+    for row, week in enumerate(month_grid(today)):
+        for column, day in enumerate(week):
+            x, y = 52 + 36 * column, 280 + 25 * row
+            color = "#172A42" if column != 6 else "#C34040"
+            if day.month != current.month:
+                color = "#A9B6C1"
+            if day == today:
+                draw.ellipse((x - 13, y - 12, x + 13, y + 12), fill="#2563A9")
+                color = "#FFFFFF"
+            _centered(draw, (x, y), str(day.day), 14, color)
+    _centered(draw, (160, 454), "Sẵn sàng nhận booking", 16, "#9FDCCB")
     return image
 
 
@@ -151,4 +174,3 @@ def image_to_rgb565_le(image: Image.Image) -> bytes:
 
 def render_booking_rgb565(alert: object | Mapping[str, Any]) -> bytes:
     return image_to_rgb565_le(render_booking_image(alert))
-
