@@ -7,7 +7,7 @@ import queue
 import socket
 import ssl
 import threading
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from email import message_from_bytes, policy
 from typing import Any
 
@@ -16,7 +16,7 @@ from .parsing import is_trusted_booking_sender, parse_booking_message
 from .state import PARSER_STATE_VERSION, StateStore
 
 LOGGER = logging.getLogger(__name__)
-RECENT_MESSAGE_LIMIT = 500  # Same bounded inbox window as 1.5.5.
+RECENT_MESSAGE_LIMIT = 20  # Bootstrap only; subsequent scans read every new UID.
 
 
 def is_quiet_hours(when: datetime | None = None, start_hour: int = 0, end_hour: int = 8) -> bool:
@@ -96,10 +96,6 @@ class ImapMonitor(threading.Thread):
         host = str(self.config["imap_host"]).strip()
         port = int(self.config.get("imap_port", 993))
         address = str(self.config["email_address"]).strip()
-        scan_days = min(365, max(1, int(self.config.get("scan_days", 90))))
-        since_date = date.today() - timedelta(days=scan_days)
-        months = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
-        since = f"{since_date.day:02d}-{months[since_date.month - 1]}-{since_date.year}"
         tls_context = ssl.create_default_context()
         processed_count = 0
         failed_count = 0
@@ -108,10 +104,10 @@ class ImapMonitor(threading.Thread):
         self.emit("status", "Đang kiểm tra thư mới nhất Agoda + Expedia…")
         with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
             client.login(address, self.password)
-            status, _ = client.select("INBOX", readonly=True)
+            status, counts = client.select("INBOX", readonly=True)
             if status != "OK":
                 raise RuntimeError("Không mở được Inbox")
-            uid_validity = "unknown"
+            uid_validity = ""
             try:
                 _, values = client.response("UIDVALIDITY")
                 if values and values[0]:
@@ -119,19 +115,36 @@ class ImapMonitor(threading.Thread):
                     uid_validity = raw_value.decode("ascii", errors="ignore") if isinstance(raw_value, bytes) else str(raw_value)
             except Exception:
                 pass
-            # 1.5.5 searches recent UIDs, then fetches only the newest 500 messages.
-            # Do not download the whole mailbox or defer alerts until a history replay finishes.
-            status, data = client.uid("search", None, "SINCE", since)
-            if status != "OK" or not data:
+            if not uid_validity.isdigit():
+                raise RuntimeError("Máy chủ không trả UIDVALIDITY; chưa thể lưu mốc đọc thư an toàn.")
+            mailbox_key = f"incremental:{PARSER_STATE_VERSION}:{self.identity_hash}:{uid_validity}"
+            position = self.state.mailbox_read_position(mailbox_key)
+            if position is None:
+                # SEARCH sequence range returns UIDs for only the last 20 entries,
+                # not a list of the entire mailbox. Empty inbox may receive mail meanwhile.
+                count = int(counts[0])
+                criteria = (f"{max(1, count - RECENT_MESSAGE_LIMIT + 1)}:*",) if count else ("ALL",)
+            else:
+                criteria = ("UID", f"{position[0] + 1}:*")
+            status, data = client.uid("search", None, *criteria)
+            if status != "OK" or not data or data[0] is None:
                 raise RuntimeError("Không tìm được email trong Inbox")
-            uids = sorted(data[0].split(), key=int)[-RECENT_MESSAGE_LIMIT:]
-            self.emit("log", f"Chỉ kiểm tra {len(uids)} thư gần nhất (tối đa {RECENT_MESSAGE_LIMIT}); đọc thư mới trước.")
-            for uid_raw in reversed(uids):
+            found = sorted({int(uid) for uid in data[0].split()})
+            # IMAP n:* also matches the last UID when n is greater than that UID.
+            uids = found[-RECENT_MESSAGE_LIMIT:] if position is None else [uid for uid in found if uid > position[0]]
+            pending = self.state.stage_mailbox_reads(mailbox_key, uids)
+            if position is None:
+                self.emit("log", f"Lần đầu: kiểm tra {len(uids)} thư gần nhất (tối đa {RECENT_MESSAGE_LIMIT}).")
+            else:
+                self.emit("log", f"Có {len(uids)} thư mới; {len(pending) - len(uids)} thư còn thiếu cần thử lại.")
+            for uid_number in pending:
                 if self.stop_event.is_set():
                     break
+                uid_raw = str(uid_number).encode("ascii")
                 uid = uid_raw.decode("ascii", errors="ignore")
                 uid_key = mailbox_uid_key(self.identity_hash, uid_validity, uid)
                 if self.state.is_processed(uid_key):
+                    self.state.finish_mailbox_read(mailbox_key, uid_number)
                     continue
                 try:
                     # Direct body fetch matches 1.5.5 and avoids a second round-trip/header gate.
@@ -163,9 +176,11 @@ class ImapMonitor(threading.Thread):
                 if self.state.is_processed(message_key):
                     # This message was copied/moved to a new UID; remember the alias to avoid downloading it again.
                     self.state.remember_processed_aliases(uid_key)
+                    self.state.finish_mailbox_read(mailbox_key, uid_number)
                     continue
                 if not is_trusted_booking_sender(sender):
                     self.state.remember_processed_aliases(uid_key, message_key)
+                    self.state.finish_mailbox_read(mailbox_key, uid_number)
                     processed_count += 1
                     continue
                 try:
@@ -187,13 +202,16 @@ class ImapMonitor(threading.Thread):
                 # Do not retain future arrivals for automatic reminders or replay lifecycle events.
                 if event.status != BOOKING_STATUS_NEW:
                     self.state.remember_processed_aliases(uid_key, message_key)
+                    self.state.finish_mailbox_read(mailbox_key, uid_number)
                     continue
                 today = date.today()
                 if event.checkin_date != today:
                     other_day_count += 1
                     self.state.remember_processed_aliases(uid_key, message_key)
+                    self.state.finish_mailbox_read(mailbox_key, uid_number)
                     continue
                 alert = self.state.register_today_confirmation(event, (uid_key, message_key), today)
+                self.state.finish_mailbox_read(mailbox_key, uid_number)
                 if alert is None:
                     self.emit("log", f"{event.source} {event.booking_id or '(không có mã)'}: đã ghi nhận; không báo lặp.")
                     continue

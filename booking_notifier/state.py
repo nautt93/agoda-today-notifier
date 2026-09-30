@@ -10,7 +10,7 @@ from typing import Any
 from .config import STATE_PATH, atomic_json_write
 from .models import BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent
 
-STATE_SCHEMA = 4
+STATE_SCHEMA = 5
 PARSER_STATE_VERSION = "p7"
 
 
@@ -40,6 +40,9 @@ class StateStore:
         value.setdefault("pending_alerts", [])
         value.setdefault("history", [])
         value.setdefault("parse_failures", {})
+        value.setdefault("mailbox_reads", {})
+        if not isinstance(value["mailbox_reads"], dict):
+            value["mailbox_reads"] = {}
         # Keep v1.5 history/pending and v1.6/1.7 saved records readable.
         if not isinstance(value["bookings"], dict):
             value["bookings"] = {}
@@ -55,6 +58,33 @@ class StateStore:
         with self.lock:
             existing = set(self.data["processed_keys"])
             return any(key and key in existing for key in keys)
+
+    def mailbox_read_position(self, mailbox_key: str) -> tuple[int, list[int]] | None:
+        with self.lock:
+            record = self.data["mailbox_reads"].get(mailbox_key)
+            if record is None:
+                return None
+            return int(record["cursor"]), list(record["pending_uids"])
+
+    def stage_mailbox_reads(self, mailbox_key: str, uids: list[int]) -> list[int]:
+        """Save the entire batch before advancing the cursor or fetching any body.
+
+        A crash, stopped monitor, or failed parse leaves unfinished UIDs recoverable.
+        """
+        with self.lock:
+            record = self.data["mailbox_reads"].setdefault(mailbox_key, {"cursor": 0, "pending_uids": []})
+            pending = set(record["pending_uids"]) | set(uids)
+            record["cursor"] = max(int(record["cursor"]), max(uids, default=0))
+            record["pending_uids"] = sorted(pending)
+            self._save_locked()
+            return sorted(pending, reverse=True)
+
+    def finish_mailbox_read(self, mailbox_key: str, uid: int) -> None:
+        with self.lock:
+            record = self.data["mailbox_reads"][mailbox_key]
+            if uid in record["pending_uids"]:
+                record["pending_uids"].remove(uid)
+                self._save_locked()
 
     def record_parse_failure(self, message_key: str, reason: str) -> int:
         with self.lock:

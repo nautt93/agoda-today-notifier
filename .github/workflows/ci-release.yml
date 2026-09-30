@@ -66,7 +66,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Khôi phục cơ chế nhận thư 1.5.5: chỉ đọc 500 thư gần nhất, đọc thư mới trước, báo ngay booking check-in hôm nay; thêm mẫu Expedia. Không quét toàn bộ hộp thư, không tự nhắc booking ngày khác. Sửa ngày check-in nằm giữa dòng và khôi phục MP3; lỗi âm thanh không đóng popup." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Lần đầu chỉ đọc 20 thư gần nhất; sau đó chỉ đọc thư mới bằng mốc UID lưu trên máy. Tắt máy/mất mạng vẫn đọc đủ thư mới chưa xử lý khi kết nối lại, không giới hạn 20 thư; mất kết nối giữa chừng không bỏ sót. Báo ngay xác nhận mới Agoda/Expedia có check-in hôm nay, bỏ qua booking ngày khác và chỉnh sửa/hủy. Giữ popup, MP3, mẫu Excel và OTA của bản trước." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

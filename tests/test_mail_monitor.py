@@ -133,7 +133,7 @@ def recent_message(source="Agoda", arrival=None, booking_id="987654321", subject
     return message.as_bytes()
 
 
-def fake_inbox(monkeypatch, messages, before_fetch=None):
+def fake_inbox(monkeypatch, messages, before_fetch=None, uid_validity=None, searches=None):
     fetched = []
 
     class FakeClient:
@@ -153,13 +153,26 @@ def fake_inbox(monkeypatch, messages, before_fetch=None):
             return "OK", [str(len(messages)).encode()]
 
         def response(self, *args):
-            return "OK", [b"123"]
+            return "OK", [uid_validity[0] if uid_validity is not None else b"123"]
 
         def uid(self, command, *args):
             if command == "search":
-                assert args[1] == "SINCE"
+                if searches is not None:
+                    searches.append(args[1:])
                 assert "FROM" not in args
-                return "OK", [b" ".join(str(uid).encode() for uid in messages)]
+                ordered = sorted(messages)
+                if args[1] == "UID":
+                    lower = int(args[2].split(":")[0])
+                    selected = [uid for uid in ordered if uid >= lower]
+                    # Simulate IMAP's surprising reversed-range behavior as well.
+                    if not selected:
+                        selected = ordered[-1:]
+                elif args[1] == "ALL":
+                    selected = ordered
+                else:
+                    lower = int(args[1].split(":")[0])
+                    selected = ordered[lower - 1:]
+                return "OK", [b" ".join(str(uid).encode() for uid in selected)]
             assert command == "fetch"
             assert args[1] == "(BODY.PEEK[])"  # No extra header fetch/filter.
             uid = int(args[0])
@@ -203,14 +216,151 @@ def test_alert_is_emitted_before_next_email_and_survives_connection_drop(tmp_pat
     assert [item.source for kind, item in events.queue if kind == "alert"] == [source]
 
 
-def test_only_latest_500_are_downloaded_and_old_mail_does_not_block_new(tmp_path, monkeypatch):
+def test_only_latest_20_are_downloaded_and_old_mail_does_not_block_new(tmp_path, monkeypatch):
     monitor, _, _ = make_monitor(tmp_path)
     non_booking = b"From: friend@example.com\r\nSubject: Hello\r\n\r\nHello"
-    fetched = fake_inbox(monkeypatch, {uid: non_booking for uid in range(1, 2001)})
+    searches = []
+    fetched = fake_inbox(monkeypatch, {uid: non_booking for uid in range(1, 2001)}, searches=searches)
     monitor.scan_mailbox()
-    assert fetched == list(range(2000, 1500, -1))
+    assert fetched == list(range(2000, 1980, -1))
     fetched.clear()
     monitor.scan_mailbox()
+    assert fetched == []
+    assert searches == [("1981:*",), ("UID", "2001:*")]
+
+
+@pytest.mark.parametrize("source", ["Agoda", "Expedia"])
+def test_restart_catches_up_all_new_mail_even_more_than_20(tmp_path, monkeypatch, source):
+    monitor, _, _ = make_monitor(tmp_path)
+    messages = {90: recent_message(source, booking_id="1000090")}
+    searches = []
+    fetched = fake_inbox(monkeypatch, messages, searches=searches)
+    monitor.scan_mailbox()
+    fetched.clear()
+    # A new process after downtime must not bootstrap again or cap the backlog.
+    monitor, state, events = make_monitor(tmp_path)
+    messages.update({uid: recent_message(source, booking_id=str(1000000 + uid)) for uid in range(91, 126)})
+    assert monitor.scan_mailbox() == 35
+    assert fetched == list(range(125, 90, -1))
+    assert searches[-1] == ("UID", "91:*")
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 35
+    assert len(state.pending_for_date(date.today())) == 36
+    fetched.clear()
+    monitor.scan_mailbox()
+    assert fetched == []
+
+
+def test_interrupted_batch_recovers_lower_uids_and_new_arrivals(tmp_path, monkeypatch):
+    monitor, _, _ = make_monitor(tmp_path)
+    messages = {
+        1: recent_message(booking_id="1000001"),
+        2: mail_monitor.imaplib.IMAP4.abort("lost connection"),
+        3: recent_message(booking_id="1000003"),
+    }
+    fetched = fake_inbox(monkeypatch, messages)
+    with pytest.raises(mail_monitor.imaplib.IMAP4.abort):
+        monitor.scan_mailbox()
+    assert fetched == [3, 2]
+    messages[2] = recent_message(booking_id="1000002")
+    messages[4] = recent_message(booking_id="1000004")
+    monitor, state, events = make_monitor(tmp_path)
+    fetched.clear()
+    assert monitor.scan_mailbox() == 3
+    assert fetched == [4, 2, 1]
+    assert len(state.pending_for_date(date.today())) == 4
+    assert [event.booking_id for kind, event in events.queue if kind == "alert"] == ["1000004", "1000002", "1000001"]
+
+
+def test_failed_fetch_retries_after_cursor_has_advanced(tmp_path, monkeypatch):
+    monitor, _, _ = make_monitor(tmp_path)
+    messages = {1: RuntimeError("temporary failure"), 2: recent_message(booking_id="1000002")}
+    fetched = fake_inbox(monkeypatch, messages)
+    assert monitor.scan_mailbox() == 1
+    messages[1] = recent_message(booking_id="1000001")
+    monitor, _, events = make_monitor(tmp_path)
+    fetched.clear()
+    assert monitor.scan_mailbox() == 1
+    assert fetched == [1]
+    assert [event.booking_id for kind, event in events.queue if kind == "alert"] == ["1000001"]
+
+
+def test_failed_parse_retries_without_refetching_completed_mail(tmp_path, monkeypatch):
+    monitor, _, _ = make_monitor(tmp_path)
+    messages = {1: recent_message(booking_id="1000001"), 2: recent_message(booking_id="1000002")}
+    fetched = fake_inbox(monkeypatch, messages)
+    parse = mail_monitor.parse_booking_message
+
+    def parse_with_failure(message):
+        return None if "1000001" in message["Message-ID"] else parse(message)
+
+    monkeypatch.setattr(mail_monitor, "parse_booking_message", parse_with_failure)
+    assert monitor.scan_mailbox() == 1
+    monitor, _, events = make_monitor(tmp_path)
+    monkeypatch.setattr(mail_monitor, "parse_booking_message", parse)
+    fetched.clear()
+    assert monitor.scan_mailbox() == 1
+    assert fetched == [1]
+    assert [event.booking_id for kind, event in events.queue if kind == "alert"] == ["1000001"]
+
+
+def test_stopped_scan_durably_keeps_unread_batch(tmp_path, monkeypatch):
+    monitor, _, _ = make_monitor(tmp_path)
+    messages = {uid: recent_message(booking_id=str(1000000 + uid)) for uid in range(1, 4)}
+
+    def stop_after_first(uid):
+        monitor.stop()
+
+    fetched = fake_inbox(monkeypatch, messages, before_fetch=stop_after_first)
+    assert monitor.scan_mailbox() == 1
+    assert fetched == [3]
+    monitor, _, _ = make_monitor(tmp_path)
+    # Replace the stopped-process callback for the resumed process.
+    fetched = fake_inbox(monkeypatch, messages)
+    assert monitor.scan_mailbox() == 2
+    assert fetched == [2, 1]
+
+
+def test_bootstrap_uses_sequence_positions_not_uid_numbers(tmp_path, monkeypatch):
+    monitor, _, _ = make_monitor(tmp_path)
+    messages = {uid: recent_message(booking_id=str(1000000 + uid)) for uid in range(10, 301, 10)}
+    fetched = fake_inbox(monkeypatch, messages)
+    monitor.scan_mailbox()
+    assert fetched == list(range(300, 100, -10))
+
+
+def test_uidvalidity_change_bootstraps_new_mailbox_not_old_cursor(tmp_path, monkeypatch):
+    monitor, _, events = make_monitor(tmp_path)
+    messages = {100: recent_message(booking_id="1000100")}
+    validity = [b"123"]
+    searches = []
+    fetched = fake_inbox(monkeypatch, messages, uid_validity=validity, searches=searches)
+    monitor.scan_mailbox()
+    validity[0] = b"456"
+    messages.clear()
+    messages[1] = recent_message("Expedia", booking_id="1000001")
+    fetched.clear()
+    assert monitor.scan_mailbox() == 1
+    assert fetched == [1]
+    assert searches[-1] == ("1:*",)
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 2
+
+
+def test_empty_inbox_then_new_mail(tmp_path, monkeypatch):
+    monitor, _, events = make_monitor(tmp_path)
+    messages = {}
+    fetched = fake_inbox(monkeypatch, messages)
+    assert monitor.scan_mailbox() == 0
+    messages[10] = recent_message()
+    assert monitor.scan_mailbox() == 1
+    assert fetched == [10]
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 1
+
+
+def test_missing_uidvalidity_cannot_silently_skip_mail(tmp_path, monkeypatch):
+    monitor, _, _ = make_monitor(tmp_path)
+    fetched = fake_inbox(monkeypatch, {1: recent_message()}, uid_validity=[None])
+    with pytest.raises(RuntimeError, match="UIDVALIDITY"):
+        monitor.scan_mailbox()
     assert fetched == []
 
 

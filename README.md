@@ -5,7 +5,8 @@
 ## Tính năng
 
 - Đọc email Agoda và Expedia qua IMAP với TLS có xác minh chứng chỉ.
-- Chỉ đọc tối đa 500 thư gần nhất như bản 1.5.5; đọc thư mới trước và bỏ qua thư đã xử lý. Không tải toàn bộ hộp thư.
+- Lần đầu chỉ đọc 20 thư gần nhất; các lần sau chỉ đọc thư mới bằng mốc UID lưu trên máy. Không tải toàn bộ hộp thư hoặc tìm lại 500 thư cũ.
+- Khi tắt máy/mất mạng, lần kết nối sau đọc đủ thư mới chưa xử lý, kể cả hơn 20 thư. Lưu danh sách thư cần đọc trước khi tải; mất kết nối/thoát giữa chừng không làm mất phần còn thiếu. Luôn đọc thư mới trước và báo ngay.
 - Agoda và Expedia dùng chung cơ chế: email xác nhận mới → đọc ngày check-in → nếu là hôm nay, lưu cảnh báo và hiện popup ngay trước khi đọc thư tiếp theo.
 - Booking ngày khác và thư chỉnh sửa/hủy được bỏ qua; không tự lên lịch nhắc booking tương lai từ dữ liệu cũ.
 - Phân biệt Expedia Collect và Hotel/Property Collect; ưu tiên đúng khoản tiền khách sạn thực nhận.
@@ -47,8 +48,8 @@ pyinstaller --noconfirm --clean BookingNotifier.spec
 ## Kiến trúc an toàn
 
 - `booking_notifier/parsing.py`: parser và nhận diện vòng đời booking.
-- `booking_notifier/state.py`: lưu cảnh báo hôm nay và dấu email đã xử lý cùng lúc, chống trùng; giữ lịch sử khi nâng cấp.
-- `booking_notifier/mail_monitor.py`: kết nối IMAP, lấy nhóm thư mới nhất, báo booking hôm nay ngay khi đọc được.
+- `booking_notifier/state.py`: lưu cảnh báo hôm nay, dấu chống trùng, mốc UID và thư còn thiếu; giữ lịch sử khi nâng cấp.
+- `booking_notifier/mail_monitor.py`: kết nối IMAP, khởi tạo từ 20 thư mới nhất rồi chỉ đọc UID mới/thư còn thiếu; báo booking hôm nay ngay khi đọc được.
 - `booking_notifier/ota_update.py`: xác minh chữ ký manifest, checksum và rollback.
 - `booking_notifier/f92_device.py`: giao tiếp thiết bị F92.
 - `tests/`: regression test cho các lỗi đã phát hiện ở v1.5.5.
