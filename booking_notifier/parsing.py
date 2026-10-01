@@ -697,6 +697,41 @@ def _header_index(row: Sequence[str], labels: Sequence[str]) -> int | None:
     return None
 
 
+def _expedia_rooms_from_stay_grid(rows: Sequence[Sequence[str]]) -> int | None:
+    """Room Nights is rooms * nights, not a room quantity by itself.
+
+    Expedia's legacy notification has one room type followed by this stay grid.
+    Infer quantity only from complete, consistent dates and divisible totals.
+    """
+    for index, header in enumerate(rows):
+        arrival = _header_index(header, CHECKIN_LABELS)
+        departure = _header_index(header, CHECKOUT_LABELS)
+        room_nights = _header_index(header, ("room nights", "total room nights"))
+        if arrival is None or departure is None or room_nights is None:
+            continue
+        total = 0
+        stay = None
+        for row in rows[index + 1:]:
+            if max(arrival, departure, room_nights) >= len(row):
+                break
+            checkin = parse_date(row[arrival], "Expedia")
+            checkout = parse_date(row[departure], "Expedia")
+            if not checkin or not checkout:
+                break
+            nights = (checkout - checkin).days
+            value = row[room_nights].strip()
+            if nights <= 0 or not re.fullmatch(r"\d{1,5}", value):
+                return None
+            count, remainder = divmod(int(value), nights)
+            if remainder or not 1 <= count <= 100 or (stay and stay != (checkin, checkout)):
+                return None
+            stay = (checkin, checkout)
+            total += count
+        if 1 <= total <= 100:
+            return total
+    return None
+
+
 def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> str:
     summary = _room_summary(text)
     if summary:
@@ -732,7 +767,7 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
                     counts[key] = 0
                 counts[key] += 1
             if order:
-                return "; ".join(f"{names[key]} x{counts[key]}" if counts[key] > 1 else names[key] for key in order)
+                return "; ".join(f"{names[key]} x{counts[key]}" for key in order)
 
     for header_index, header in enumerate(rows):
         room_column = _header_index(header, ROOM_LABELS)
@@ -782,6 +817,8 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
         r"S[oố]\s*lượng\s*ph[oò]ng", r"S[oố]\s*ph[oò]ng\s*đặt",
     ), 40)
     count = _parse_room_count(count_value)
+    if count is None and not count_value and source == "Expedia":
+        count = _expedia_rooms_from_stay_grid(rows)
     return f"{room} x{count}" if count is not None else room
 
 

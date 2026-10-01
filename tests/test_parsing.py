@@ -119,7 +119,52 @@ def test_expedia_html_repeated_rooms(expedia_message_factory):
     </body></html>"""
     alert = parse_booking_message(expedia_message_factory("fallback", html=html))
     assert alert is not None
-    assert alert.room_type == "Deluxe King x2; Family Suite"
+    assert alert.room_type == "Deluxe King x2; Family Suite x1"
+
+
+def test_real_expedia_notification_structure(expedia_message_factory):
+    html = (Path(__file__).parent / "fixtures" / "expedia_new_booking.html").read_text(encoding="utf-8")
+    event = parse_booking_message(expedia_message_factory(
+        "", html=html, sender="Expedia Group <booknotif@expedia.com>",
+        subject="Expedia - New Booking - Arriving on 13 Oct 2026",
+    ))
+    assert event.source == "Expedia"
+    assert event.booking_id == "1234567890"
+    assert event.guest_name == "MINH TRẦN"
+    assert event.room_type == "Deluxe Double Room - Room Only x1"
+    assert event.checkin_date == date(2026, 10, 13)
+    assert event.checkout_date == date(2026, 10, 14)
+    assert event.total_revenue == "345,487 VND"
+
+
+@pytest.mark.parametrize(("room_nights", "checkout", "suffix"), [
+    ("4", "Oct 15, 2026", " x2"),  # Two rooms for two nights, not four rooms.
+    ("2", "Oct 15, 2026", " x1"),
+    ("3", "Oct 15, 2026", ""),  # Inconsistent total: do not invent a quantity.
+    ("0", "Oct 14, 2026", ""),
+    ("1", "Oct 13, 2026", ""),
+    ("unknown", "Oct 14, 2026", ""),
+])
+def test_expedia_room_nights_are_not_room_quantity(expedia_message_factory, room_nights, checkout, suffix):
+    html = (Path(__file__).parent / "fixtures" / "expedia_new_booking.html").read_text(encoding="utf-8")
+    html = html.replace("Oct 14, 2026", checkout).replace("<td>1</td>", f"<td>{room_nights}</td>")
+    event = parse_booking_message(expedia_message_factory("", html=html))
+    assert event.room_type == "Deluxe Double Room - Room Only" + suffix
+
+
+def test_expedia_explicit_room_count_takes_priority_over_stay_grid(expedia_message_factory):
+    html = (Path(__file__).parent / "fixtures" / "expedia_new_booking.html").read_text(encoding="utf-8")
+    html = html.replace("<tr><td>Pricing Model", "<tr><td>No. of Rooms:</td><td>2</td></tr><tr><td>Pricing Model")
+    event = parse_booking_message(expedia_message_factory("", html=html))
+    assert event.room_type == "Deluxe Double Room - Room Only x2"
+
+
+def test_expedia_duplicate_confirmation_does_not_count_twice(expedia_message_factory):
+    html = """<table><tr><th>Room Type</th><th>Confirmation ID</th></tr>
+    <tr><td>Deluxe King</td><td>ABC123</td></tr>
+    <tr><td>Deluxe King</td><td>ABC123</td></tr></table>"""
+    event = parse_booking_message(expedia_message_factory(BASE, html=html))
+    assert event.room_type == "Deluxe King x1"
 
 
 def test_revenue_priority_does_not_depend_on_row_order():

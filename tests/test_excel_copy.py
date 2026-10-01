@@ -90,3 +90,14 @@ def test_bilingual_agoda_note_includes_source_room_and_single_room_quantity():
     message.set_content(html, subtype="html")
     event = parse_booking_message(message)
     assert excel_tsv(event) == "\tMinh Trần\t30\t2\t2\t1200000\t\t\tAgoda Bunk Bed in Mixed Dormitory Room x1"
+
+
+def test_real_expedia_structure_reaches_exact_legacy_excel_columns():
+    message = EmailMessage()
+    message["From"] = "Expedia Group <booknotif@expedia.com>"
+    message["Subject"] = "Expedia - New Booking - Arriving on 13 Oct 2026"
+    html = (Path(__file__).parent / "fixtures" / "expedia_new_booking.html").read_text(encoding="utf-8")
+    message.set_content(html, subtype="html")
+    assert excel_tsv(parse_booking_message(message)) == (
+        "\tMINH TRẦN\t13\t14\t1\t345487\t\t\tExpedia Deluxe Double Room - Room Only x1"
+    )

@@ -90,8 +90,18 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
         message["Subject"] = "Booking confirmation"
         message["Message-ID"] = "<popup-smoke@example>"
         message.set_content(f"Booking ID: 707908051 Check-in: {date.today().isoformat()} Guest name: Test Guest")
-        html = (Path(__file__).parent / "fixtures" / "agoda_bilingual_confirmation.html").read_text(encoding="utf-8")
+        if source == "Expedia":
+            fixture = "expedia_new_booking.html"
+            guest = "MINH TRẦN"
+            room = "Deluxe Double Room - Room Only x1"
+        else:
+            fixture = "agoda_bilingual_confirmation.html"
+            guest = "Minh Trần"
+            room = "Bunk Bed in Mixed Dormitory Room x1"
+        html = (Path(__file__).parent / "fixtures" / fixture).read_text(encoding="utf-8")
         html = html.replace("30-Sep-2026 (30-09-2026)", date.today().isoformat())
+        html = html.replace("Oct 13, 2026", date.today().isoformat())
+        html = html.replace("Oct 14, 2026", (date.today() + timedelta(days=1)).isoformat())
         message.add_alternative(html, subtype="html")
 
         class FakeClient:
@@ -123,16 +133,24 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
         root.update()
         assert app.active_alert is not None
         assert app.active_alert.source == source
-        assert app.active_alert.guest_name == "Minh Trần"
-        assert app.active_alert.room_type == "Bunk Bed in Mixed Dormitory Room x1"
+        assert app.active_alert.guest_name == guest
+        assert app.active_alert.room_type == room
+        assert app.active_guest_var.get() == guest
+        assert app.active_room_var.get() == room
         assert app.active_popup is not None and app.active_popup.winfo_viewable()
         assert bool(app.active_popup.attributes("-topmost"))
+        assert app.active_popup.title() == f"{source} • Check-in hôm nay"
         assert root.state() != "iconic"
         app.copy_active_alert()
-        assert root.clipboard_get().split("\t")[8] == f"{source} Bunk Bed in Mixed Dormitory Room x1"
+        cells = root.clipboard_get().split("\t")
+        assert len(cells) == 9
+        assert cells[0] == "" and cells[1] == guest
+        assert cells[6:9] == ["", "", f"{source} {room}"]
+        if source == "Expedia":
+            assert cells[2:6] == [str(date.today().day), str((date.today() + timedelta(days=1)).day), "1", "345487"]
         app.acknowledge_alert()
         values = app.history_tree.item(app.history_tree.get_children()[0], "values")
-        assert values[2:4] == ("Minh Trần", "Bunk Bed in Mixed Dormitory Room x1")
+        assert values[2:4] == (guest, room)
         monitor.scan_mailbox()
         app._drain_events()
         assert app.active_popup is None
@@ -143,8 +161,9 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Real Windows popup repair")
-def test_repaired_pending_details_update_same_popup_queue_and_excel(tmp_path, monkeypatch):
-    if run_in_fresh_tk_process("test_repaired_pending_details_update_same_popup_queue_and_excel"):
+@pytest.mark.parametrize("source", ["Agoda", "Expedia"])
+def test_repaired_pending_details_update_same_popup_queue_and_excel(tmp_path, monkeypatch, source):
+    if run_in_fresh_tk_process(f"test_repaired_pending_details_update_same_popup_queue_and_excel[{source}]"):
         return
     import app as desktop
     from booking_notifier.config import ConfigStore
@@ -163,14 +182,14 @@ def test_repaired_pending_details_update_same_popup_queue_and_excel(tmp_path, mo
         app.f92_worker.notify = Mock()
         today = date.today()
         for booking_id in ("987654321", "987654322"):
-            incomplete = BookingEvent(source="Agoda", booking_id=booking_id, checkin_date=today, guest_name="Minh")
+            incomplete = BookingEvent(source=source, booking_id=booking_id, checkin_date=today, guest_name="Minh")
             app.enqueue_alert(state.register_today_confirmation(incomplete, (booking_id,), today))
         root.update()
         original_popup = app.active_popup
         assert app.active_guest_var.get() == "Minh"
         assert app.active_room_var.get() == "—"
         for booking_id in ("987654321", "987654322"):
-            repaired = BookingEvent(source="Agoda", booking_id=booking_id, checkin_date=today,
+            repaired = BookingEvent(source=source, booking_id=booking_id, checkin_date=today,
                                     guest_name="Minh Trần", room_type="Bunk Bed in Mixed Dormitory Room x1")
             assert state.register_today_confirmation(repaired, (f"new:{booking_id}",), today) is None
         app.events.put(("history_changed", None))
@@ -185,7 +204,7 @@ def test_repaired_pending_details_update_same_popup_queue_and_excel(tmp_path, mo
         app.copy_active_alert()
         cells = root.clipboard_get().split("\t")
         assert cells[1] == "Minh Trần"
-        assert cells[8] == "Agoda Bunk Bed in Mixed Dormitory Room x1"
+        assert cells[8] == f"{source} Bunk Bed in Mixed Dormitory Room x1"
         app.acknowledge_alert()
         assert state.history()[0]["guest_name"] == "Minh Trần"
         assert state.history()[0]["room_type"] == "Bunk Bed in Mixed Dormitory Room x1"

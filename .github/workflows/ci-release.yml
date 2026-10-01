@@ -66,7 +66,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Sửa đúng mẫu email Agoda song ngữ Anh/Việt: ghép Customer First Name + Customer Last Name, đọc Room Type và No. of Rooms, giữ x1 khi có 1 phòng. Ghi chú Excel gồm Agoda + hạng phòng + số lượng. Bổ sung lịch sử cũ từ tối đa 20 thư gần nhất, không báo lại booking ngày khác. Cập nhật popup đang mở, hàng chờ và F92 khi sửa dữ liệu, không phát lại âm thanh. Giữ cơ chế chỉ đọc thư mới, chỉ báo booking check-in hôm nay và OTA an toàn." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Sửa đúng mẫu Expedia New Booking thực tế: đọc đầy đủ tên khách và Room Type Name, tính số phòng từ Room Nights chia số đêm ở khi dữ liệu khớp, giữ x1 trong bảng mã xác nhận. Nguồn Expedia; ghi chú Excel gồm Expedia + hạng phòng + số lượng phòng. Popup và lịch sử dùng cùng format Excel 9 cột của bản 1.5.5. Kiểm thử email Expedia qua IMAP đến popup Windows và clipboard. Giữ cơ chế giống Agoda: chỉ đọc thư mới, chỉ báo booking mới check-in hôm nay, bỏ qua sửa/hủy và ngày khác; OTA an toàn." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

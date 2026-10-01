@@ -199,6 +199,38 @@ def make_monitor(tmp_path, **config):
     return monitor, state, events
 
 
+@pytest.mark.parametrize(("offset", "subject", "expected"), [
+    (0, "Expedia - New Booking", 1),
+    (1, "Expedia - New Booking", 0),
+    (-1, "Expedia - New Booking", 0),
+    (0, "Expedia - Reservation modified", 0),
+    (0, "Expedia - Reservation cancelled", 0),
+])
+def test_real_expedia_structure_only_alerts_new_arrivals_today(tmp_path, monkeypatch, offset, subject, expected):
+    arrival = date.today() + timedelta(days=offset)
+    html = (Path(__file__).parent / "fixtures" / "expedia_new_booking.html").read_text(encoding="utf-8")
+    html = html.replace("Oct 13, 2026", arrival.isoformat())
+    html = html.replace("Oct 14, 2026", (arrival + timedelta(days=1)).isoformat())
+    message = EmailMessage()
+    message["From"] = "Expedia Group <booknotif@expedia.com>"
+    message["Subject"] = subject
+    message["Message-ID"] = "<real-expedia-structure@example>"
+    message.set_content(html, subtype="html")
+    fake_inbox(monkeypatch, {1: message.as_bytes()})
+    monitor, state, events = make_monitor(tmp_path)
+    assert monitor.scan_mailbox() == 1  # Parsed mail count, not notification count.
+    alerts = [payload for kind, payload in events.queue if kind == "alert"]
+    assert len(alerts) == expected
+    if expected:
+        assert alerts[0].source == "Expedia"
+        assert alerts[0].guest_name == "MINH TRẦN"
+        assert alerts[0].room_type == "Deluxe Double Room - Room Only x1"
+        assert len(state.pending_for_date(arrival)) == 1
+    else:
+        assert state.pending_for_date(arrival) == []
+    assert monitor.scan_mailbox() == 0  # No duplicate notification.
+
+
 @pytest.mark.parametrize("source", ["Agoda", "Expedia"])
 def test_alert_is_emitted_before_next_email_and_survives_connection_drop(tmp_path, monkeypatch, source):
     monitor, state, events = make_monitor(tmp_path)
@@ -432,7 +464,7 @@ def test_bilingual_parser_upgrade_repairs_yesterdays_history_without_popup(tmp_p
     assert state.history()[0]["room_type"] == "Bunk Bed in Mixed Dormitory Room x1"
     assert not any(kind in {"alert", "deferred_alert", "booking_cancelled", "booking_modified"} for kind, _ in events.queue)
     assert not state.data["pending_alerts"]
-    assert state.mailbox_parser_version(mailbox_key) == "p9"
+    assert state.mailbox_parser_version(mailbox_key) == "p10"
     fetched.clear()
     monitor.scan_mailbox()
     assert fetched == []
