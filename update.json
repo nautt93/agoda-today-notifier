@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.7",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.7/Booking-Checkin-Hom-Nay-1.7.7.exe",
-  "sha256": "d294fd9551589b7f6509f123098033751640b6e5b24c41dc046a368bf5dd1d78",
-  "size": 23764140,
-  "notes": "Sửa đúng mẫu email Agoda song ngữ Anh/Việt: ghép Customer First Name + Customer Last Name, đọc Room Type và No. of Rooms, giữ x1 khi có 1 phòng. Ghi chú Excel gồm Agoda + hạng phòng + số lượng. Bổ sung lịch sử cũ từ tối đa 20 thư gần nhất, không báo lại booking ngày khác. Cập nhật popup đang mở, hàng chờ và F92 khi sửa dữ liệu, không phát lại âm thanh. Giữ cơ chế chỉ đọc thư mới, chỉ báo booking check-in hôm nay và OTA an toàn.",
-  "signature": "qNjbG/0evZvc6qNkDz7D5mghsdw/ECJQltaBOOa5zQeqUHqzYA4hA8rPNQU5xErJDwmnLxJt/oDuoAcF19o8AA=="
+  "version": "1.7.8",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.8/Booking-Checkin-Hom-Nay-1.7.8.exe",
+  "sha256": "c3e02af6310c7d9f3e324655a03dbc91f1c54d84dc8b1f279f9b01ee66cbb6fc",
+  "size": 23765685,
+  "notes": "Sửa đúng mẫu Expedia New Booking thực tế: đọc đầy đủ tên khách và Room Type Name, tính số phòng từ Room Nights chia số đêm ở khi dữ liệu khớp, giữ x1 trong bảng mã xác nhận. Nguồn Expedia; ghi chú Excel gồm Expedia + hạng phòng + số lượng phòng. Popup và lịch sử dùng cùng format Excel 9 cột của bản 1.5.5. Kiểm thử email Expedia qua IMAP đến popup Windows và clipboard. Giữ cơ chế giống Agoda: chỉ đọc thư mới, chỉ báo booking mới check-in hôm nay, bỏ qua sửa/hủy và ngày khác; OTA an toàn.",
+  "signature": "qQxEO2RAoT8uElCQ9dHQ90n8sxFFRyucUAdkyae+Q9LZOuyvo/CtOruEwbl6kYkx8KlWr8fA51toe3RGO8okCw=="
 }
