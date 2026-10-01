@@ -21,6 +21,7 @@
 - Giao diện desktop tối–vàng cao cấp; nhấp đúp, Ctrl+C hoặc chuột phải để sao chép một/nhiều booking sang Excel.
 - Màn hình chính chỉ có bảng **Booking hôm nay** và nút bánh răng **Cài đặt**. Lưu & khởi động, quét thủ công, kiểm tra IMAP/cập nhật, Thoát, cấu hình và nhật ký đều nằm trong cửa sổ Cài đặt. Đóng Cài đặt không dừng theo dõi email hoặc mất nội dung đang nhập.
 - Menu chuột phải chỉ có **Sao chép dòng đã chọn sang Excel**, không có Sao chép tất cả. Bảng lọc theo ngày hôm nay và tự đổi ngày; sao chép đúng dòng hiển thị sau khi lọc, không xóa lịch sử cũ.
+- Bấm X hoặc thu nhỏ cửa sổ chính để ẩn xuống khay hệ thống Windows; ứng dụng vẫn quét email, phát âm thanh và hiện popup Agoda/Expedia riêng, không tự mở lại cửa sổ chính. Popup đang mở không bị đóng hay xác nhận khi ẩn ứng dụng. Bấm biểu tượng khay để mở lại; chuột phải có Mở Booking hôm nay, Cài đặt và Thoát ứng dụng. Nếu khay lỗi, giữ cửa sổ trên Taskbar để vẫn mở lại được.
 - Hỗ trợ màn hình/loa F92 qua USB serial.
 - F92 hiển thị lịch tháng và đồng hồ khi chờ, cập nhật mỗi phút; giữ màn hình booking cho đến khi xác nhận.
 - Nhật ký ghi mã booking/ngày check-in và UID email chưa đọc được để kiểm tra các mẫu email mới.

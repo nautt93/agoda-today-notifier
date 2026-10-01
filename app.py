@@ -34,6 +34,7 @@ from booking_notifier.ota_update import (
 )
 from booking_notifier.security import protect_secret, unprotect_secret
 from booking_notifier.state import StateStore
+from booking_notifier.system_tray import SystemTray
 
 LOGGER = logging.getLogger("booking_notifier")
 
@@ -123,6 +124,8 @@ class BookingNotifierApp:
         self.config = self.config_store.load()
         self.state = StateStore()
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self.tray = SystemTray(self.events)
+        self.hidden_to_tray = False
         self.monitor: ImapMonitor | None = None
         self.monitor_generation = 0
         self.alert_queue: list[BookingEvent] = []
@@ -143,6 +146,8 @@ class BookingNotifierApp:
         self.f92_worker = F92Worker(self.events, self.config)
         self.f92_worker.start()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.root.bind("<Unmap>", self._on_main_unmap, add="+")
+        self.tray.start()
         self.root.after(150, self._drain_events)
         self.root.after(1000, self._minute_tick)
         self.f92_clock_job = self.root.after(1500, self._f92_clock_tick)
@@ -333,6 +338,7 @@ class BookingNotifierApp:
         self._build_log()
 
     def open_settings(self) -> None:
+        self.restore_main_window()
         self.settings_window.deiconify()
         self.settings_window.lift()
         self.settings_window.focus_force()
@@ -475,7 +481,7 @@ class BookingNotifierApp:
         checks = (
             ("Giờ yên lặng 00:00–08:00", self.quiet_var),
             ("Khởi động cùng Windows", self.start_windows_var),
-            ("Thu nhỏ khi khởi động", self.start_minimized_var),
+            ("Ẩn xuống khay khi khởi động", self.start_minimized_var),
         )
         for index, (text, variable) in enumerate(checks):
             ttk.Checkbutton(
@@ -786,6 +792,19 @@ class BookingNotifierApp:
                     messagebox.showerror("Không cài được cập nhật", str(payload), parent=self.root)
                 elif event_type == "restart_ready":
                     self._start_monitor_generation(*payload)
+                elif event_type == "tray_ready":
+                    if self.hidden_to_tray:
+                        self.hide_to_tray()
+                elif event_type == "tray_open":
+                    self.restore_main_window()
+                elif event_type == "tray_settings":
+                    self.open_settings()
+                elif event_type == "tray_exit":
+                    self.exit_app()
+                    return
+                elif event_type == "tray_failed":
+                    self.restore_main_window()
+                    self.log(f"Không tạo được biểu tượng khay; vẫn có thể mở ứng dụng từ Taskbar: {payload}")
         except queue.Empty:
             pass
         except Exception:
@@ -860,15 +879,12 @@ class BookingNotifierApp:
                 raise
 
     def _minimize_if_no_alert(self) -> None:
-        if not self.active_popup:
-            self.root.iconify()
+        # Startup hiding is safe even when an unacknowledged booking is open.
+        self.hide_to_tray()
 
     def _present_alert_popup(self, popup: tk.Toplevel) -> None:
-        """Restore the app and reliably bring a new booking alert to the foreground."""
+        """Show only the independent alert, including while the main window is hidden."""
         try:
-            if self.root.state() in {"iconic", "withdrawn"}:
-                self.root.deiconify()
-            self.root.lift()
             popup.deiconify()
             popup.update_idletasks()
             popup.attributes("-topmost", True)
@@ -1196,13 +1212,46 @@ class BookingNotifierApp:
         self.log_text.configure(state="disabled")
 
     def on_close(self) -> None:
-        self.root.iconify()
-        self.log("Ứng dụng vẫn chạy nền. Mở lại từ Taskbar, vào Cài đặt và bấm Thoát để kết thúc.")
+        self.hide_to_tray()
+        self.log("Ứng dụng vẫn theo dõi email và hiện popup. Bấm biểu tượng Booking Desk dưới khay để mở lại.")
+
+    def _on_main_unmap(self, event: tk.Event) -> None:
+        if event.widget is self.root and not self.closing and self.root.state() == "iconic":
+            # Run after Windows finishes minimizing; ignore child/settings events.
+            self.root.after_idle(self._hide_if_still_minimized)
+
+    def _hide_if_still_minimized(self) -> None:
+        if not self.closing and self.root.state() == "iconic":
+            self.hide_to_tray()
+
+    def hide_to_tray(self) -> None:
+        if self.closing:
+            return
+        self.hidden_to_tray = True
+        self.settings_window.withdraw()
+        # Never withdraw without a usable icon: Taskbar remains the safe fallback.
+        if self.tray.available:
+            self.root.withdraw()
+        elif self.root.state() != "iconic":
+            self.root.iconify()
+        if self.active_popup is not None:
+            self._present_alert_popup(self.active_popup)
+
+    def restore_main_window(self) -> None:
+        if self.closing:
+            return
+        self.hidden_to_tray = False
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+        if self.active_popup is not None:
+            self._present_alert_popup(self.active_popup)
 
     def exit_app(self) -> None:
         if self.closing:
             return
         self.closing = True
+        self.tray.stop()
         if self.f92_clock_job is not None:
             self.root.after_cancel(self.f92_clock_job)
         self.monitor_generation += 1

@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
+import time
 import tkinter as tk
 from datetime import date, timedelta
 from pathlib import Path
@@ -44,6 +46,17 @@ def popup_action_buttons(popup):
         assert button.winfo_rooty() + button.winfo_height() <= popup.winfo_rooty() + popup.winfo_height()
         assert button.cget("takefocus")
     return buttons
+
+
+def wait_for_tray(app):
+    deadline = time.monotonic() + 8
+    while not app.tray.available and time.monotonic() < deadline:
+        app.root.update()
+        time.sleep(0.02)
+    assert app.tray.available
+    assert app.tray.icon.visible
+    assert app.tray.icon._hwnd and app.tray.icon._icon_handle
+    app._drain_events()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="The packaged desktop app targets Windows")
@@ -205,7 +218,10 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
     root = tk.Tk()
     app = BookingNotifierApp(root)
     try:
-        root.iconify()
+        wait_for_tray(app)
+        app.on_close()
+        root.update()
+        assert root.state() == "withdrawn"
 
         def broken_sound():
             raise RuntimeError("unsupported audio file")
@@ -266,7 +282,11 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
         assert app.active_popup is not None and app.active_popup.winfo_viewable()
         assert bool(app.active_popup.attributes("-topmost"))
         assert app.active_popup.title() == f"{source} • Check-in hôm nay"
-        assert root.state() != "iconic"
+        assert root.state() == "withdrawn"  # Booking must not restore the main page.
+        popup_before_hide = app.active_popup
+        app.on_close()  # Hiding again cannot dismiss/acknowledge an existing alert.
+        root.update()
+        assert app.active_popup is popup_before_hide and popup_before_hide.winfo_viewable()
         copy_button, close_button = popup_action_buttons(app.active_popup)
         screenshot_dir = os.environ.get("BOOKING_UI_SCREENSHOT_DIR")
         if screenshot_dir:
@@ -291,6 +311,7 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
         close_button.invoke()
         assert app.active_popup is None
         assert not app.sound_active
+        assert root.state() == "withdrawn"
         values = app.history_tree.item(app.history_tree.get_children()[0], "values")
         assert values[2:4] == (guest, room)
         monitor.scan_mailbox()
@@ -300,6 +321,64 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
         assert app.active_popup is None
     finally:
         app.exit_app()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows tray and Tk lifecycle")
+def test_tray_minimize_restore_settings_and_exit(tmp_path, monkeypatch):
+    if run_in_fresh_tk_process("test_tray_minimize_restore_settings_and_exit"):
+        return
+    import app as desktop
+    from booking_notifier.config import ConfigStore
+    from booking_notifier.state import StateStore
+
+    config_store = ConfigStore(tmp_path / "config.json")
+    config_store.save({
+        "f92_enabled": False, "start_with_windows": False,
+        "update_manifest_source": "", "start_minimized": True,
+    })
+    monkeypatch.setattr(desktop, "ConfigStore", lambda: config_store)
+    monkeypatch.setattr(desktop, "StateStore", lambda: StateStore(tmp_path / "state.json"))
+    root = tk.Tk()
+    app = BookingNotifierApp(root)
+    try:
+        wait_for_tray(app)
+        app._minimize_if_no_alert()
+        root.update()
+        assert root.state() == "withdrawn"
+        menu = list(app.tray.icon.menu.items)
+        assert len(menu) == 4 and menu[0].default
+        assert [menu[0].text, menu[1].text, menu[-1].text] == [
+            "Mở Booking hôm nay", "Cài đặt", "Thoát ứng dụng",
+        ]
+
+        def native_callback(item):
+            worker = threading.Thread(target=lambda: item(app.tray.icon))
+            worker.start()
+            worker.join(2)
+            assert not worker.is_alive()  # No cross-thread Tk calls/deadlock.
+            app._drain_events()
+            if not app.closing:
+                root.update()
+
+        native_callback(menu[0])
+        assert root.state() == "normal" and not app.hidden_to_tray
+        root.iconify()  # Native minimize control, not just the X handler.
+        root.update()
+        assert root.state() == "withdrawn"
+        native_callback(menu[1])
+        assert root.state() == "normal" and app.settings_window.winfo_viewable()
+        app.email_var.set("draft@example.com")
+        app.on_close()
+        root.update()
+        assert root.state() == app.settings_window.state() == "withdrawn"
+        native_callback(menu[1])
+        assert app.email_var.get() == "draft@example.com"
+        assert app.settings_window.winfo_viewable()
+        native_callback(menu[-1])
+        assert app.closing and not app.tray.available
+    finally:
+        if not app.closing:
+            app.exit_app()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Real Windows popup repair")

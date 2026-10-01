@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "booking-checkin-hom-nay"
-version = "1.7.10"
+version = "1.7.11"
 description = "Windows notifier for Agoda and Expedia bookings checking in today"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,6 +12,7 @@ dependencies = [
   "cryptography==50.0.1",
   "Pillow==12.3.0",
   "pyserial==3.5",
+  "pystray==0.19.5; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

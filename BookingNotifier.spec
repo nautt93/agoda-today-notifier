@@ -11,13 +11,14 @@ a = Analysis(
     datas=[],
     hiddenimports=[
         "PIL.ImageTk",
+        "pystray._win32",
         "serial.tools.list_ports_windows",
         "cryptography.hazmat.primitives.asymmetric.ed25519",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["pystray._darwin", "pystray._appindicator", "pystray._gtk", "pystray._xorg"],
     noarchive=False,
     optimize=1,
 )
@@ -42,4 +43,3 @@ exe = EXE(
     entitlements_file=None,
     version=str(project_dir / "version_info.txt"),
 )
-

@@ -56,7 +56,12 @@ def main() -> None:
                         and not list(target.parent.glob("*.update.tmp"))
                         and not list(target.parent.glob("*.update.started"))):
                     assert not (config_dir / "update-error.log").exists()
+                    logs = list(config_dir.glob("*.log"))
+                    if not any("Windows system tray ready" in log.read_text(encoding="utf-8") for log in logs):
+                        time.sleep(0.25)
+                        continue
                     print("PASS: frozen updater handoff, EXE replacement, real Tk UI startup confirmed.", flush=True)
+                    print("PASS: packaged Windows tray backend starts successfully.", flush=True)
                     return
                 time.sleep(0.25)
             error_log = config_dir / "update-error.log"
