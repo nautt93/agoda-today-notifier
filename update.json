@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.10",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.10/Booking-Checkin-Hom-Nay-1.7.10.exe",
-  "sha256": "8fd33ec36ddfa27fe16fce6503efd21a8049c7c1120fab62e89a0c83801fc56e",
-  "size": 23771649,
-  "notes": "Giao diện chính chỉ còn Booking hôm nay và nút bánh răng Cài đặt. Gộp Lưu & khởi động, Quét email ngay, Kiểm tra IMAP/cập nhật, Thoát, cấu hình và nhật ký vào cửa sổ Cài đặt; đóng Cài đặt không dừng theo dõi hoặc mất nội dung đang nhập. Menu chuột phải chỉ có Sao chép dòng đã chọn sang Excel, bỏ Sao chép tất cả. Bảng tự lọc booking hôm nay và đổi ngày, sao chép đúng dòng đang hiển thị, giữ nguyên lịch sử cũ. Giữ popup 2 nút lớn, format Excel 9 cột, đầy đủ tên và hạng phòng/số lượng Agoda + Expedia, cơ chế chỉ báo booking mới đến hôm nay và OTA an toàn.",
-  "signature": "3sTja7DyHIay0knhU7U/1qvOEnYjAh9xtcv+b5VKuazCIsUXLQC50Ahlea37c4siLWMQFvJ6cu6jgNtt3kQWAA=="
+  "version": "1.7.11",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.11/Booking-Checkin-Hom-Nay-1.7.11.exe",
+  "sha256": "00b368789d73280bf6ec91fc27e330a525dec89ba5f234353e8498a01dd89815",
+  "size": 23827357,
+  "notes": "Bấm X hoặc thu nhỏ để ẩn xuống khay Windows thật. Popup Agoda/Expedia vẫn nổi độc lập, không tự mở cửa sổ chính, không mất cảnh báo đang chờ và không dừng âm thanh/quét email/F92. Biểu tượng khay có Mở Booking hôm nay, Cài đặt, Thoát ứng dụng; giữ Taskbar nếu khay lỗi. Khởi động ẩn vẫn hiện popup. Giữ giao diện chính gọn, popup 2 nút lớn, chép Excel 9 cột đúng mẫu cũ, đầy đủ tên/hạng phòng/số lượng và OTA an toàn.",
+  "signature": "yi+SA7GmjUEa+KAJMneM02kUqyIeww0LT3BcUG61Fu8NiG2Y66AljjbeLO/C/2a1OYTE06PA5wFjr70kIElADg=="
 }
