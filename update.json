@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.9",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.9/Booking-Checkin-Hom-Nay-1.7.9.exe",
-  "sha256": "43f5afe1fff7494e077def39e0ce623ace9e3966e9dc4ed65913704d9edf5deb",
-  "size": 23766869,
-  "notes": "Popup Agoda và Expedia chỉ có 2 nút lớn: Sao chép và Đóng thông báo. Chữ 18 pt, nút cao tối thiểu 96 px và rộng bằng nhau; luôn giữ nút ở cuối cửa sổ. Sao chép giữ popup mở; Đóng thông báo xác nhận và dừng âm thanh. Giữ Ctrl+C, chuột phải và đúng 9 cột Excel bản 1.5.5. Giữ sửa mẫu Expedia thực tế: đầy đủ tên, hạng phòng, số lượng kể cả x1; ghi chú Expedia + hạng phòng + số lượng. Chỉ báo booking mới check-in hôm nay, bỏ qua sửa/hủy và ngày khác; OTA an toàn.",
-  "signature": "wq18xfuo2nlRDs8mWAiPcGDrZ7peSgPdSuRnU0jOT5MQWRzHxfgRIProst2f8/v/+QxGI/J3QVXdz++a8PTUAQ=="
+  "version": "1.7.10",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.10/Booking-Checkin-Hom-Nay-1.7.10.exe",
+  "sha256": "8fd33ec36ddfa27fe16fce6503efd21a8049c7c1120fab62e89a0c83801fc56e",
+  "size": 23771649,
+  "notes": "Giao diện chính chỉ còn Booking hôm nay và nút bánh răng Cài đặt. Gộp Lưu & khởi động, Quét email ngay, Kiểm tra IMAP/cập nhật, Thoát, cấu hình và nhật ký vào cửa sổ Cài đặt; đóng Cài đặt không dừng theo dõi hoặc mất nội dung đang nhập. Menu chuột phải chỉ có Sao chép dòng đã chọn sang Excel, bỏ Sao chép tất cả. Bảng tự lọc booking hôm nay và đổi ngày, sao chép đúng dòng đang hiển thị, giữ nguyên lịch sử cũ. Giữ popup 2 nút lớn, format Excel 9 cột, đầy đủ tên và hạng phòng/số lượng Agoda + Expedia, cơ chế chỉ báo booking mới đến hôm nay và OTA an toàn.",
+  "signature": "3sTja7DyHIay0knhU7U/1qvOEnYjAh9xtcv+b5VKuazCIsUXLQC50Ahlea37c4siLWMQFvJ6cu6jgNtt3kQWAA=="
 }
