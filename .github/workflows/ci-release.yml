@@ -76,7 +76,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Popup Agoda và Expedia chỉ có 2 nút lớn: Sao chép và Đóng thông báo. Chữ 18 pt, nút cao tối thiểu 96 px và rộng bằng nhau; luôn giữ nút ở cuối cửa sổ. Sao chép giữ popup mở; Đóng thông báo xác nhận và dừng âm thanh. Giữ Ctrl+C, chuột phải và đúng 9 cột Excel bản 1.5.5. Giữ sửa mẫu Expedia thực tế: đầy đủ tên, hạng phòng, số lượng kể cả x1; ghi chú Expedia + hạng phòng + số lượng. Chỉ báo booking mới check-in hôm nay, bỏ qua sửa/hủy và ngày khác; OTA an toàn." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Giao diện chính chỉ còn Booking hôm nay và nút bánh răng Cài đặt. Gộp Lưu & khởi động, Quét email ngay, Kiểm tra IMAP/cập nhật, Thoát, cấu hình và nhật ký vào cửa sổ Cài đặt; đóng Cài đặt không dừng theo dõi hoặc mất nội dung đang nhập. Menu chuột phải chỉ có Sao chép dòng đã chọn sang Excel, bỏ Sao chép tất cả. Bảng tự lọc booking hôm nay và đổi ngày, sao chép đúng dòng đang hiển thị, giữ nguyên lịch sử cũ. Giữ popup 2 nút lớn, format Excel 9 cột, đầy đủ tên và hạng phòng/số lượng Agoda + Expedia, cơ chế chỉ báo booking mới đến hôm nay và OTA an toàn." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

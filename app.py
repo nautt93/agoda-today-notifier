@@ -274,10 +274,31 @@ class BookingNotifierApp:
         )
         self.status_label.pack(anchor="e", pady=(8, 0))
 
+        self.history_tab = ttk.Frame(shell, style="Card.TFrame", padding=18)
+        self.history_tab.pack(fill="both", expand=True, padx=26, pady=(18, 22))
+        self._build_history()
+
+        # Build once, keep hidden: config variables and the live log remain
+        # available to background monitoring without cluttering the main page.
+        self.settings_window = tk.Toplevel(self.root)
+        self.settings_window.withdraw()
+        self.settings_window.title("Cài đặt • Booking Desk")
+        self.settings_window.geometry("980x700")
+        self.settings_window.minsize(840, 600)
+        self.settings_window.configure(bg=self.COLORS["bg"])
+        self.settings_window.transient(self.root)
+        self.settings_window.protocol("WM_DELETE_WINDOW", self.close_settings)
+        self.settings_window.bind("<Escape>", lambda _event: self.close_settings())
+        settings_shell = ttk.Frame(self.settings_window, padding=18)
+        settings_shell.pack(fill="both", expand=True)
+        ttk.Label(settings_shell, text="Cài đặt", style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(
+            settings_shell, text="Kết nối email, công cụ vận hành và nhật ký hệ thống.", style="Muted.TLabel",
+        ).pack(anchor="w", pady=(4, 14))
         toolbar_card = tk.Frame(
-            shell, bg=self.COLORS["surface"], highlightbackground=self.COLORS["border"], highlightthickness=1,
+            settings_shell, bg=self.COLORS["surface"], highlightbackground=self.COLORS["border"], highlightthickness=1,
         )
-        toolbar_card.pack(fill="x", padx=26, pady=(18, 14))
+        toolbar_card.pack(fill="x", pady=(0, 14))
         toolbar = ttk.Frame(toolbar_card, style="Card.TFrame", padding=(14, 12))
         toolbar.pack(fill="x")
         ttk.Button(toolbar, text="Lưu & khởi động", command=self.save_and_start, style="Accent.TButton").pack(side="left")
@@ -288,31 +309,51 @@ class BookingNotifierApp:
             toolbar, text="Kiểm tra cập nhật", command=lambda: self.check_for_updates(False), style="Secondary.TButton",
         ).pack(side="right", padx=(0, 8))
 
-        notebook = ttk.Notebook(shell, style="Premium.TNotebook")
-        notebook.pack(fill="both", expand=True, padx=26, pady=(0, 22))
-        self.history_tab = ttk.Frame(notebook, style="Card.TFrame", padding=18)
+        ttk.Button(
+            settings_shell, text="Đóng Cài đặt", command=self.close_settings, style="Secondary.TButton",
+        ).pack(side="bottom", anchor="e", pady=(12, 0))
+        notebook = ttk.Notebook(settings_shell, style="Premium.TNotebook")
+        self.settings_notebook = notebook
+        notebook.pack(fill="both", expand=True)
         self.settings_tab = ttk.Frame(notebook, style="Card.TFrame", padding=0)
         self.log_tab = ttk.Frame(notebook, style="Card.TFrame", padding=18)
-        notebook.add(self.history_tab, text="BOOKING HÔM NAY")
         notebook.add(self.settings_tab, text="CẤU HÌNH")
         notebook.add(self.log_tab, text="NHẬT KÝ")
-        self._build_history()
         self._build_settings()
         self._build_log()
+
+    def open_settings(self) -> None:
+        self.settings_window.deiconify()
+        self.settings_window.lift()
+        self.settings_window.focus_force()
+
+    def close_settings(self) -> None:
+        # Closing settings must not stop monitoring or discard unsaved fields.
+        self.settings_window.withdraw()
+        if self.active_popup is not None:
+            self.active_popup.lift()
+            self.active_popup.focus_force()
+        else:
+            self.settings_button.focus_set()
 
     def _build_history(self) -> None:
         heading = ttk.Frame(self.history_tab, style="Card.TFrame")
         heading.pack(fill="x", pady=(0, 14))
         title_box = ttk.Frame(heading, style="Card.TFrame")
         title_box.pack(side="left")
-        ttk.Label(title_box, text="Booking đã xác nhận", style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(title_box, text="Booking hôm nay", style="SectionTitle.TLabel").pack(anchor="w")
         ttk.Label(
             title_box, text="Nhấp đúp hoặc nhấn chuột phải vào một dòng để sao chép sang Excel.",
             style="CardMuted.TLabel",
         ).pack(anchor="w", pady=(4, 0))
-        ttk.Label(
-            heading, text=datetime.now().strftime("Hôm nay • %d/%m/%Y"), style="CardMuted.TLabel",
-        ).pack(side="right", anchor="n", pady=4)
+        self.settings_button = ttk.Button(
+            heading, text="\u2699\ufe0e Cài đặt", command=self.open_settings, style="Secondary.TButton", takefocus=True,
+        )
+        self.settings_button.pack(side="right", anchor="n")
+        self.history_date_var = tk.StringVar()
+        ttk.Label(heading, textvariable=self.history_date_var, style="CardMuted.TLabel").pack(
+            side="right", anchor="n", padx=(0, 18), pady=10,
+        )
 
         table = ttk.Frame(self.history_tab, style="Card.TFrame")
         table.pack(fill="both", expand=True)
@@ -342,7 +383,6 @@ class BookingNotifierApp:
             activebackground=self.COLORS["gold"], activeforeground="#FFFFFF", relief="solid", borderwidth=1,
         )
         self.history_menu.add_command(label="Sao chép dòng đã chọn sang Excel", command=self.copy_selected_history)
-        self.history_menu.add_command(label="Sao chép toàn bộ lịch sử sang Excel", command=self.copy_all_history)
 
     def _build_settings(self) -> None:
         canvas = tk.Canvas(self.settings_tab, bg=self.COLORS["surface"], highlightthickness=0)
@@ -441,9 +481,6 @@ class BookingNotifierApp:
         updates.pack(fill="x", pady=(0, 8))
         updates.columnconfigure(0, weight=1)
         self._add_setting_field(updates, "Nguồn update.json đã ký", self.update_source_var, "entry", 0, 0)
-        ttk.Button(
-            updates, text="Kiểm tra cập nhật", command=lambda: self.check_for_updates(False), style="Secondary.TButton",
-        ).grid(row=0, column=1, sticky="s", padx=(8, 6), pady=6)
 
     def _add_setting_field(
         self,
@@ -735,6 +772,8 @@ class BookingNotifierApp:
 
     def _minute_tick(self) -> None:
         try:
+            if self.history_day != date.today():
+                self.refresh_history()
             if not (self.quiet_var.get() and is_quiet_hours()):
                 for alert in self.state.pending_for_date(date.today()):
                     self.enqueue_alert(alert)
@@ -1059,9 +1098,16 @@ class BookingNotifierApp:
         self._show_next_alert()
 
     def refresh_history(self) -> None:
+        self.history_day = date.today()
+        self.history_date_var.set(self.history_day.strftime("Hôm nay • %d/%m/%Y"))
+        self.history_rows: dict[str, dict[str, Any]] = {}
         for item in self.history_tree.get_children():
             self.history_tree.delete(item)
-        for index, record in enumerate(self.state.history()):
+        for record in self.state.history():
+            if record.get("checkin_date") != self.history_day.isoformat():
+                continue
+            index = len(self.history_rows)
+            self.history_rows[str(index)] = dict(record)
             checkin = str(record.get("checkin_date", ""))
             try:
                 checkin = date.fromisoformat(checkin).strftime("%d/%m/%Y") if checkin else ""
@@ -1090,21 +1136,14 @@ class BookingNotifierApp:
         selection = self.history_tree.selection()
         if not selection:
             return "break"
-        history = self.state.history()
         alerts: list[BookingEvent] = []
         for item in selection:
-            index = int(item)
-            if index < len(history):
-                alerts.append(BookingEvent.from_dict(history[index]))
+            if item in self.history_rows:
+                alerts.append(BookingEvent.from_dict(self.history_rows[item]))
         if alerts:
             label = "Đã sao chép booking sang Excel" if len(alerts) == 1 else f"Đã sao chép {len(alerts)} booking sang Excel"
             self._copy_alerts_to_clipboard(alerts, label)
         return "break"
-
-    def copy_all_history(self) -> None:
-        alerts = [BookingEvent.from_dict(record) for record in self.state.history()]
-        if alerts:
-            self._copy_alerts_to_clipboard(alerts, f"Đã sao chép {len(alerts)} booking sang Excel")
 
     def _copy_alerts_to_clipboard(self, alerts: list[BookingEvent], status: str) -> None:
         self.root.clipboard_clear()
@@ -1133,7 +1172,7 @@ class BookingNotifierApp:
 
     def on_close(self) -> None:
         self.root.iconify()
-        self.log("Ứng dụng vẫn chạy nền. Mở lại từ Taskbar và bấm Thoát để kết thúc.")
+        self.log("Ứng dụng vẫn chạy nền. Mở lại từ Taskbar, vào Cài đặt và bấm Thoát để kết thúc.")
 
     def exit_app(self) -> None:
         if self.closing:

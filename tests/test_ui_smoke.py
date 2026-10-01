@@ -55,8 +55,8 @@ def test_windows_ui_builds_with_excel_context_menu():
     app = BookingNotifierApp(root)
     try:
         root.update_idletasks()
-        assert app.history_menu.index("end") == 1
-        assert "Sao chép" in app.history_menu.entrycget(0, "label")
+        assert app.history_menu.index("end") == 0
+        assert app.history_menu.entrycget(0, "label") == "Sao chép dòng đã chọn sang Excel"
         assert app.history_tree.bind("<Button-3>")
         assert app.history_tree.bind("<Control-c>")
 
@@ -75,6 +75,105 @@ def test_windows_ui_builds_with_excel_context_menu():
         assert app.active_popup.winfo_viewable()
         assert bool(app.active_popup.attributes("-topmost"))
         assert root.state() != "iconic"
+    finally:
+        app.exit_app()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows main page and settings")
+def test_main_page_only_today_with_settings_and_selected_excel(tmp_path, monkeypatch):
+    if run_in_fresh_tk_process("test_main_page_only_today_with_settings_and_selected_excel"):
+        return
+    import app as desktop
+    from booking_notifier.config import ConfigStore
+    from booking_notifier.state import StateStore
+
+    config_store = ConfigStore(tmp_path / "config.json")
+    config_store.save({"f92_enabled": False, "start_with_windows": False, "update_manifest_source": ""})
+    state = StateStore(tmp_path / "state.json")
+    monkeypatch.setattr(desktop, "ConfigStore", lambda: config_store)
+    monkeypatch.setattr(desktop, "StateStore", lambda: state)
+    root = tk.Tk()
+    app = BookingNotifierApp(root)
+    try:
+        def descendants(widget):
+            for child in widget.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    continue
+                yield child
+                yield from descendants(child)
+
+        root.update()
+        buttons = [child for child in descendants(root) if isinstance(child, ttk.Button)]
+        assert buttons == [app.settings_button]
+        assert "Cài đặt" in app.settings_button.cget("text")
+        assert not any(isinstance(child, ttk.Notebook) for child in descendants(root))
+        assert app.settings_window.state() == "withdrawn"
+        assert app.history_menu.index("end") == 0
+
+        today = date.today()
+        records = [BookingEvent(source="Agoda", booking_id="OLD", guest_name="Old Guest",
+                                checkin_date=today - timedelta(days=1)).to_dict()]
+        for booking_id, guest in (("1234567890", "MINH TRẦN"), ("1234567891", "SECOND GUEST")):
+            records.append(BookingEvent(source="Expedia", booking_id=booking_id, guest_name=guest,
+                                        room_type="Deluxe Double Room x1", checkin_date=today,
+                                        checkout_date=today + timedelta(days=1), total_revenue="345,487 VND").to_dict())
+        records.append(BookingEvent(source="Agoda", booking_id="FUTURE", guest_name="Future Guest",
+                                    checkin_date=today + timedelta(days=1)).to_dict())
+        monkeypatch.setattr(state, "history", lambda: records)
+        app.refresh_history()
+        root.update()
+        items = app.history_tree.get_children()
+        assert len(items) == 2
+        assert app.history_tree.item(items[0], "values")[2] == "MINH TRẦN"
+        assert app.history_date_var.get() == today.strftime("Hôm nay • %d/%m/%Y")
+        app.history_tree.selection_set(items[1])
+        app.history_menu.invoke(0)
+        assert root.clipboard_get().split("\t")[1] == "SECOND GUEST"
+        assert root.clipboard_get().split("\t")[8] == "Expedia Deluxe Double Room x1"
+        assert "\n" not in root.clipboard_get()  # Selected row only, never copy all.
+
+        screenshot_dir = os.environ.get("BOOKING_UI_SCREENSHOT_DIR")
+        if screenshot_dir:
+            from PIL import ImageGrab
+
+            target = Path(screenshot_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            x, y = root.winfo_rootx(), root.winfo_rooty()
+            ImageGrab.grab(bbox=(x, y, x + root.winfo_width(), y + root.winfo_height())).save(target / "main-bookings.png")
+
+        app.settings_button.invoke()
+        root.update()
+        assert app.settings_window.winfo_viewable()
+        settings_buttons = [child.cget("text") for child in descendants(app.settings_window) if isinstance(child, ttk.Button)]
+        for label in ("Lưu & khởi động", "Quét email ngay", "Kiểm tra IMAP", "Kiểm tra cập nhật", "Thoát"):
+            assert label in settings_buttons
+        assert [app.settings_notebook.tab(tab, "text") for tab in app.settings_notebook.tabs()] == ["CẤU HÌNH", "NHẬT KÝ"]
+        app.email_var.set("draft@example.com")
+        app.log("Settings remain available")
+        window = app.settings_window
+        app.close_settings()
+        root.update()
+        assert window.state() == "withdrawn" and not app.closing
+        app.open_settings()
+        root.update()
+        assert app.settings_window is window
+        assert app.email_var.get() == "draft@example.com"
+        assert "Settings remain available" in app.log_text.get("1.0", "end")
+        if screenshot_dir:
+            x, y = window.winfo_rootx(), window.winfo_rooty()
+            ImageGrab.grab(bbox=(x, y, x + window.winfo_width(), y + window.winfo_height())).save(target / "settings.png")
+        app.close_settings()
+        # The daily table rolls over without removing saved historical records.
+        class NextDate(date):
+            @classmethod
+            def today(cls):
+                return today + timedelta(days=1)
+
+        monkeypatch.setattr(desktop, "date", NextDate)
+        app._minute_tick()
+        assert len(app.history_tree.get_children()) == 1
+        assert app.history_tree.item(app.history_tree.get_children()[0], "values")[1] == "FUTURE"
+        assert len(state.history()) == 4
     finally:
         app.exit_app()
 

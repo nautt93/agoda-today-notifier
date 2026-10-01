@@ -19,6 +19,8 @@
 - Phát MP3 hoặc WAV như bản cũ; tệp âm thanh/thiết bị lỗi không đóng popup booking. Giờ yên lặng 00:00–08:00 giữ cảnh báo chờ và hiện sau 08:00 nếu bật.
 - Chép Excel đúng mẫu 1.5.5: STT trống | tên khách | số ngày đến | số ngày đi | số đêm | tiền dạng số | trống | trống | nguồn + hạng phòng + số lượng phòng đọc được. Dán bắt đầu từ cột A; không chèn mã booking hoặc tiêu đề email. Popup và lịch sử dùng chung format này.
 - Giao diện desktop tối–vàng cao cấp; nhấp đúp, Ctrl+C hoặc chuột phải để sao chép một/nhiều booking sang Excel.
+- Màn hình chính chỉ có bảng **Booking hôm nay** và nút bánh răng **Cài đặt**. Lưu & khởi động, quét thủ công, kiểm tra IMAP/cập nhật, Thoát, cấu hình và nhật ký đều nằm trong cửa sổ Cài đặt. Đóng Cài đặt không dừng theo dõi email hoặc mất nội dung đang nhập.
+- Menu chuột phải chỉ có **Sao chép dòng đã chọn sang Excel**, không có Sao chép tất cả. Bảng lọc theo ngày hôm nay và tự đổi ngày; sao chép đúng dòng hiển thị sau khi lọc, không xóa lịch sử cũ.
 - Hỗ trợ màn hình/loa F92 qua USB serial.
 - F92 hiển thị lịch tháng và đồng hồ khi chờ, cập nhật mỗi phút; giữ màn hình booking cho đến khi xác nhận.
 - Nhật ký ghi mã booking/ngày check-in và UID email chưa đọc được để kiểm tra các mẫu email mới.
