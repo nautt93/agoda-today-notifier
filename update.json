@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.6",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.6/Booking-Checkin-Hom-Nay-1.7.6.exe",
-  "sha256": "4c00cef3593248a47bc189a9726be24237880aa504f490264a81cec5c206eac7",
-  "size": 23761308,
-  "notes": "Sửa tên khách chỉ lấy dòng đầu và thiếu hạng phòng: ghép dữ liệu nhiều dòng, ưu tiên HTML đầy đủ, hỗ trợ họ/tên riêng, bảng ngang/dọc và số lượng phòng. Bổ sung dữ liệu đã lưu từ tối đa 20 thư gần nhất một lần khi nâng cấp, không báo trùng; giữ mốc UID và đọc đủ thư mới chưa xử lý khi mất mạng. Giữ popup, mẫu Excel 9 cột và OTA; chỉ báo booking mới Agoda/Expedia check-in hôm nay.",
-  "signature": "4wQ93EhDCSmtLiPRaV3hNEAKWxmqR6Ni83nkxTOyAtifb0N7RbbQBW2hUCno+ugeFiM3lfVWpPfJ/gcXL9hZCw=="
+  "version": "1.7.7",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.7/Booking-Checkin-Hom-Nay-1.7.7.exe",
+  "sha256": "d294fd9551589b7f6509f123098033751640b6e5b24c41dc046a368bf5dd1d78",
+  "size": 23764140,
+  "notes": "Sửa đúng mẫu email Agoda song ngữ Anh/Việt: ghép Customer First Name + Customer Last Name, đọc Room Type và No. of Rooms, giữ x1 khi có 1 phòng. Ghi chú Excel gồm Agoda + hạng phòng + số lượng. Bổ sung lịch sử cũ từ tối đa 20 thư gần nhất, không báo lại booking ngày khác. Cập nhật popup đang mở, hàng chờ và F92 khi sửa dữ liệu, không phát lại âm thanh. Giữ cơ chế chỉ đọc thư mới, chỉ báo booking check-in hôm nay và OTA an toàn.",
+  "signature": "qNjbG/0evZvc6qNkDz7D5mghsdw/ECJQltaBOOa5zQeqUHqzYA4hA8rPNQU5xErJDwmnLxJt/oDuoAcF19o8AA=="
 }
