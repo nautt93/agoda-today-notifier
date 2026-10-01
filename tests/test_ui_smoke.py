@@ -103,6 +103,8 @@ def test_main_page_only_today_with_settings_and_selected_excel(tmp_path, monkeyp
                 yield from descendants(child)
 
         root.update()
+        assert root.winfo_rootx() + root.winfo_width() <= root.winfo_screenwidth()
+        assert root.winfo_rooty() + root.winfo_height() <= root.winfo_screenheight() - 48
         buttons = [child for child in descendants(root) if isinstance(child, ttk.Button)]
         assert buttons == [app.settings_button]
         assert "Cài đặt" in app.settings_button.cget("text")
@@ -144,6 +146,7 @@ def test_main_page_only_today_with_settings_and_selected_excel(tmp_path, monkeyp
         app.settings_button.invoke()
         root.update()
         assert app.settings_window.winfo_viewable()
+        assert app.settings_window.winfo_rooty() + app.settings_window.winfo_height() <= root.winfo_screenheight() - 48
         settings_buttons = [child.cget("text") for child in descendants(app.settings_window) if isinstance(child, ttk.Button)]
         for label in ("Lưu & khởi động", "Quét email ngay", "Kiểm tra IMAP", "Kiểm tra cập nhật", "Thoát"):
             assert label in settings_buttons

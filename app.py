@@ -116,7 +116,7 @@ class BookingNotifierApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(f"{APP_NAME} {APP_VERSION}")
-        self.root.geometry("1080x740")
+        self._fit_desktop_window(self.root, 1080, 740)
         self.root.minsize(920, 640)
         self.root.configure(bg=self.COLORS["bg"])
         self.config_store = ConfigStore()
@@ -154,6 +154,16 @@ class BookingNotifierApp:
         if self.config.get("start_minimized"):
             self.root.after(200, self._minimize_if_no_alert)
         self.root.after(3500, lambda: self.check_for_updates(silent=True))
+
+    @staticmethod
+    def _fit_desktop_window(window: tk.Toplevel | tk.Tk, width: int, height: int) -> None:
+        # Leave space for window chrome and the Windows taskbar on small screens.
+        screen_width, screen_height = window.winfo_screenwidth(), window.winfo_screenheight()
+        width = min(width, max(320, screen_width - 64))
+        height = min(height, max(240, screen_height - 96))
+        x = max(8, (screen_width - width) // 2)
+        y = max(8, (screen_height - height - 80) // 2)
+        window.geometry(f"{width}x{height}+{x}+{y}")
 
     def _build_styles(self) -> None:
         style = ttk.Style(self.root)
@@ -283,7 +293,7 @@ class BookingNotifierApp:
         self.settings_window = tk.Toplevel(self.root)
         self.settings_window.withdraw()
         self.settings_window.title("Cài đặt • Booking Desk")
-        self.settings_window.geometry("980x700")
+        self._fit_desktop_window(self.settings_window, 980, 700)
         self.settings_window.minsize(840, 600)
         self.settings_window.configure(bg=self.COLORS["bg"])
         self.settings_window.transient(self.root)
