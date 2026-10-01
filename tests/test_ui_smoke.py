@@ -127,6 +127,10 @@ def test_main_page_only_today_with_settings_and_selected_excel(tmp_path, monkeyp
         items = app.history_tree.get_children()
         assert len(items) == 2
         assert app.history_tree.item(items[0], "values")[2] == "MINH TRẦN"
+        x, _, width, _ = app.history_tree.bbox(items[0], "revenue")
+        assert x + width <= app.history_tree.winfo_width()
+        scrollbars = [child for child in app.history_tree.master.winfo_children() if isinstance(child, ttk.Scrollbar)]
+        assert len(scrollbars) == 1 and scrollbars[0].winfo_width() > 0
         assert app.history_date_var.get() == today.strftime("Hôm nay • %d/%m/%Y")
         app.history_tree.selection_set(items[1])
         app.history_menu.invoke(0)

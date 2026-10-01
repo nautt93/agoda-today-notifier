@@ -379,8 +379,23 @@ class BookingNotifierApp:
             self.history_tree.column(column, width=widths[column], minwidth=60)
         scrollbar = ttk.Scrollbar(table, command=self.history_tree.yview)
         self.history_tree.configure(yscrollcommand=scrollbar.set)
-        self.history_tree.pack(side="left", fill="both", expand=True)
+        # Reserve the scrollbar first; otherwise the table's requested width
+        # can consume its space on a smaller desktop window.
         scrollbar.pack(side="right", fill="y")
+        self.history_tree.pack(side="left", fill="both", expand=True)
+
+        def fit_columns(event: tk.Event) -> None:
+            available = max(60 * len(columns), event.width - 4)
+            remaining = available - 60 * len(columns)
+            weight_total = sum(width - 60 for width in widths.values())
+            allocated = 0
+            for index, column in enumerate(columns):
+                width = (available - allocated if index == len(columns) - 1
+                         else 60 + remaining * (widths[column] - 60) // weight_total)
+                self.history_tree.column(column, width=width)
+                allocated += width
+
+        self.history_tree.bind("<Configure>", fit_columns)
         self.history_tree.tag_configure("even", background=self.COLORS["surface"])
         self.history_tree.tag_configure("odd", background=self.COLORS["surface_alt"])
         self.history_tree.bind("<Double-1>", self.copy_selected_history)
