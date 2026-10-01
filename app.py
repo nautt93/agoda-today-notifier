@@ -126,6 +126,7 @@ class BookingNotifierApp:
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.tray = SystemTray(self.events)
         self.hidden_to_tray = False
+        self.startup_hide_job: str | None = None
         self.monitor: ImapMonitor | None = None
         self.monitor_generation = 0
         self.alert_queue: list[BookingEvent] = []
@@ -157,7 +158,7 @@ class BookingNotifierApp:
         if self._has_complete_config():
             self.start_monitoring()
         if self.config.get("start_minimized"):
-            self.root.after(200, self._minimize_if_no_alert)
+            self.startup_hide_job = self.root.after(200, self._minimize_if_no_alert)
         self.root.after(3500, lambda: self.check_for_updates(silent=True))
 
     @staticmethod
@@ -880,6 +881,9 @@ class BookingNotifierApp:
 
     def _minimize_if_no_alert(self) -> None:
         # Startup hiding is safe even when an unacknowledged booking is open.
+        if self.startup_hide_job is not None:
+            self.root.after_cancel(self.startup_hide_job)
+            self.startup_hide_job = None
         self.hide_to_tray()
 
     def _present_alert_popup(self, popup: tk.Toplevel) -> None:
@@ -1240,6 +1244,9 @@ class BookingNotifierApp:
     def restore_main_window(self) -> None:
         if self.closing:
             return
+        if self.startup_hide_job is not None:
+            self.root.after_cancel(self.startup_hide_job)
+            self.startup_hide_job = None
         self.hidden_to_tray = False
         self.root.deiconify()
         self.root.lift()
