@@ -4,6 +4,7 @@ import queue
 import ssl
 from datetime import date, timedelta
 from email.message import EmailMessage
+from pathlib import Path
 
 import pytest
 
@@ -402,6 +403,38 @@ def test_missing_uidvalidity_cannot_silently_skip_mail(tmp_path, monkeypatch):
     fetched = fake_inbox(monkeypatch, {1: recent_message()}, uid_validity=[None])
     with pytest.raises(RuntimeError, match="UIDVALIDITY"):
         monitor.scan_mailbox()
+    assert fetched == []
+
+
+def test_bilingual_parser_upgrade_repairs_yesterdays_history_without_popup(tmp_path, monkeypatch):
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 1)
+
+    monkeypatch.setattr(mail_monitor, "date", FixedDate)
+    monitor, state, events = make_monitor(tmp_path)
+    past = date(2026, 9, 30)
+    original = BookingEvent(source="Agoda", booking_id="987654321", checkin_date=past, guest_name="Minh")
+    state.acknowledge(state.register_today_confirmation(original, ("old",), past))
+    mailbox_key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(mailbox_key, [100], parser_version="p8")
+    state.finish_mailbox_read(mailbox_key, 100)
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Booking confirmation"
+    html = (Path(__file__).parent / "fixtures" / "agoda_bilingual_confirmation.html").read_text(encoding="utf-8")
+    message.set_content(html, subtype="html")
+    fetched = fake_inbox(monkeypatch, {100: message.as_bytes()})
+    assert monitor.scan_mailbox() == 1
+    assert fetched == [100]
+    assert state.history()[0]["guest_name"] == "Minh Trần"
+    assert state.history()[0]["room_type"] == "Bunk Bed in Mixed Dormitory Room x1"
+    assert not any(kind in {"alert", "deferred_alert", "booking_cancelled", "booking_modified"} for kind, _ in events.queue)
+    assert not state.data["pending_alerts"]
+    assert state.mailbox_parser_version(mailbox_key) == "p9"
+    fetched.clear()
+    monitor.scan_mailbox()
     assert fetched == []
 
 

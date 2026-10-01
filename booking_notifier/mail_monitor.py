@@ -223,6 +223,8 @@ class ImapMonitor(threading.Thread):
                     continue
                 today = date.today()
                 if event.checkin_date != today:
+                    if self.state.repair_known_confirmation(event):
+                        self.emit("log", f"Đã bổ sung tên khách/hạng phòng cho {event.source} {event.booking_id}; không phát cảnh báo ngày khác.")
                     other_day_count += 1
                     self.state.remember_processed_aliases(uid_key, message_key)
                     self.state.finish_mailbox_read(mailbox_key, uid_number)

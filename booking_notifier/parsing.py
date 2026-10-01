@@ -46,7 +46,7 @@ ROOM_LABELS = (
 ROOM_COUNT_LABELS = (
     "number of rooms", "rooms booked", "room quantity", "quantity", "qty",
     "no of rooms", "no. of rooms", "no of room", "no. of room", "no rooms",
-    "no of rms", "of rooms", "of rms", "rooms", "room(s)", "số lượng phòng", "số phòng đặt",
+    "no of rms", "of rooms", "of rms", "rooms", "room(s)", "số lượng phòng", "số phòng đặt", "số phòng",
 )
 CONFIRMATION_LABELS = (
     "expedia confirmation id", "expedia confirmation number", "room confirmation id",
@@ -96,8 +96,12 @@ AGODA_REVENUE_LABELS = (
     "Tổng tiền",
 )
 
-FIRST_NAME_LABELS = ("customer first name", "guest first name", "traveler first name", "first name", "given name")
-LAST_NAME_LABELS = ("customer last name", "guest last name", "traveler last name", "last name", "surname", "family name")
+FIRST_NAME_LABELS = (
+    "customer first name", "guest first name", "traveler first name", "first name", "given name", "tên khách hàng",
+)
+LAST_NAME_LABELS = (
+    "customer last name", "guest last name", "traveler last name", "last name", "surname", "family name", "họ khách hàng",
+)
 FIELD_LABELS = (
     GUEST_LABELS + FIRST_NAME_LABELS + LAST_NAME_LABELS + ROOM_LABELS + ROOM_COUNT_LABELS
     + CHECKIN_LABELS + CHECKOUT_LABELS + CONFIRMATION_LABELS + PAYMENT_MODEL_LABELS
@@ -106,7 +110,9 @@ FIELD_LABELS = (
        "email", "address", "country", "country of residence", "country region of residence", "nationality",
        "special requests", "remarks", "meal plan", "rate plan", "cancellation policy", "payment instructions",
        "room type code", "room code", "guest details", "reservation details", "booking details", "room details",
-       "adults", "children", "number of guests", "occupancy", "thank you", "important information")
+       "adults", "children", "number of guests", "occupancy", "thank you", "important information",
+       "số người", "no. of extra bed", "no of extra bed", "số giường thêm", "tên chính sách giá",
+       "other guests", "khách khác", "yêu cầu đặc biệt", "quốc gia cư trú")
 )
 
 MONTHS = {
@@ -376,19 +382,17 @@ def _safe_date(year: int, month: int, day: int) -> date | None:
 
 
 def _row_value(rows: Sequence[Sequence[str]], labels: Iterable[str]) -> str:
-    normalized_labels = {normalized(label) for label in labels}
+    labels = tuple(labels)
     for row_index, row in enumerate(rows):
         for column, cell in enumerate(row):
-            key = normalized(cell)
             inline_value = ""
             if ":" in cell:
                 inline_label, inline_value = cell.split(":", 1)
-                inline_label = normalized(inline_label)
             else:
                 inline_label = ""
-            if key not in normalized_labels and inline_label not in normalized_labels:
+            if not _matches_label(cell, labels) and not _matches_label(inline_label, labels):
                 continue
-            if inline_value.strip():
+            if inline_value.strip() and not _is_field_header(inline_value):
                 return inline_value.strip()
             for candidate in row[column + 1:]:
                 if _is_field_header(candidate):
@@ -430,7 +434,7 @@ def _date_by_labels(text: str, rows: Sequence[Sequence[str]], labels: Sequence[s
     for row_index, row in enumerate(rows):
         for column, cell in enumerate(row):
             label, _, inline = cell.partition(":")
-            if normalized(label) not in wanted:
+            if not _matches_label(label, wanted):
                 continue
             candidates = [inline] if inline.strip() else []
             if column + 1 < len(row) and normalized(row[column + 1]) not in date_headers:
@@ -484,8 +488,38 @@ def clean_guest_name(value: str) -> str:
     return value
 
 
+def _matches_label(value: str, labels: Iterable[str]) -> bool:
+    """Accept exact labels and EN + VI translations, not arbitrary prefix matches.
+
+    Agoda puts e.g. `Customer First Name<br>Tên Khách Hàng` in one cell.
+    `Room Type Code` must still never be mistaken for `Room Type`.
+    """
+    key = normalized(value).strip(" :-")
+    wanted = {normalized(label).strip(" :-") for label in labels}
+    if key in wanted:
+        return True
+    return any(key.startswith(label + " ") and key[len(label):].strip(" :-/") in wanted
+               for label in wanted)
+
+
 def _is_field_header(value: str) -> bool:
-    return normalized(value.split(":", 1)[0]) in FIELD_HEADERS
+    return _matches_label(value.split(":", 1)[0], FIELD_HEADERS)
+
+
+def _text_label_value(text: str, labels: Sequence[str], max_length: int = 120) -> str:
+    """Read stacked bilingual label/value pairs in the flattened HTML/plain text."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        label, separator, inline = line.partition(":")
+        if not _matches_label(label, labels):
+            continue
+        payload = ([inline] if separator and inline.strip() else []) + lines[index + 1:]
+        while payload and _matches_label(payload[0], labels):
+            payload.pop(0)  # The translation repeats this field; it is not its value.
+        value = _field_value("\n".join(payload), max_length, multiline=True)
+        if value:
+            return value
+    return ""
 
 
 def _field_value(value: str, max_length: int, multiline: bool = False) -> str:
@@ -551,16 +585,17 @@ def _customer_info_name(text: str, rows: Sequence[Sequence[str]]) -> str:
 
 
 def extract_guest_name(text: str, rows: Sequence[Sequence[str]]) -> str:
+    table_first = clean_guest_name(_row_value(rows, FIRST_NAME_LABELS) or _text_label_value(text, FIRST_NAME_LABELS, 60))
+    table_last = clean_guest_name(_row_value(rows, LAST_NAME_LABELS) or _text_label_value(text, LAST_NAME_LABELS, 60))
+    combined_table_name = clean_guest_name(" ".join(part for part in (table_first, table_last) if part))
+    if table_first and table_last and combined_table_name:
+        return combined_table_name
+
     customer_info = _customer_info_name(text, rows)
     if customer_info:
         return customer_info
 
-    table_full_name = clean_guest_name(_row_value(rows, GUEST_LABELS))
-    table_first = clean_guest_name(_row_value(rows, FIRST_NAME_LABELS))
-    table_last = clean_guest_name(_row_value(rows, LAST_NAME_LABELS))
-    combined_table_name = clean_guest_name(" ".join(part for part in (table_first, table_last) if part))
-    if table_first and table_last and combined_table_name:
-        return combined_table_name
+    table_full_name = clean_guest_name(_row_value(rows, GUEST_LABELS) or _text_label_value(text, GUEST_LABELS))
     if table_full_name:
         return table_full_name
 
@@ -613,9 +648,9 @@ def _parse_room_count(value: str) -> int | None:
     return count if 1 <= count <= 100 else None
 
 
-def _format_room_allocations(allocations: OrderedDict[str, tuple[str, int]]) -> str:
+def _format_room_allocations(allocations: OrderedDict[str, tuple[str, int]], *, include_single: bool = False) -> str:
     return "; ".join(
-        f"{name} x{count}" if count > 1 else name
+        f"{name} x{count}" if count > 1 or include_single else name
         for name, count in allocations.values()
     )
 
@@ -652,13 +687,12 @@ def _room_summary(text: str) -> str:
         key = normalized(room)
         old = allocations.get(key, (room, 0))
         allocations[key] = (old[0], old[1] + count)
-    return _format_room_allocations(allocations)
+    return _format_room_allocations(allocations, include_single=True)
 
 
 def _header_index(row: Sequence[str], labels: Sequence[str]) -> int | None:
-    wanted = {normalized(label) for label in labels}
     for index, value in enumerate(row):
-        if normalized(value) in wanted:
+        if _matches_label(value, labels):
             return index
     return None
 
@@ -713,7 +747,9 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
             if not room:
                 break
             count = 1
-            if count_column is not None and count_column < len(row):
+            if count_column is not None:
+                if count_column >= len(row):
+                    break
                 parsed_count = _parse_room_count(row[count_column])
                 if parsed_count is None and row[count_column].strip():
                     break  # Do not treat unrelated detail tables as extra booked rooms.
@@ -722,7 +758,7 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
             old = allocations.get(key, (room, 0))
             allocations[key] = (old[0], old[1] + count)
         if allocations:
-            return _format_room_allocations(allocations)
+            return _format_room_allocations(allocations, include_single=count_column is not None)
 
     # Prefer the explicit Name field and never let "Room Type Code" win.
     labels = (
@@ -730,7 +766,7 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
         "Unit Type", "Unit Name", "Accommodation Type", "Hạng phòng", "Loại phòng", "Tên phòng",
         "Room Description", "Room Type Booked", "Booked Room Type",
     )
-    value = _row_value(rows, labels) or _extract_field(text, (
+    value = _row_value(rows, labels) or _text_label_value(text, labels, 220) or _extract_field(text, (
         r"Room\s*type\s*(?:name|booked)", r"Room\s*type(?!\s*code)", r"Room\s*category",
         r"Room\s*(?:name|description)", r"Booked\s*room(?:\s*type)?", r"Unit\s*(?:type|name)",
         r"Accommodation\s*type", r"H[aạ]ng\s*ph[oò]ng", r"Lo[aạ]i\s*ph[oò]ng", r"T[eê]n\s*ph[oò]ng",
@@ -741,12 +777,12 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
     room = clean_room_type(value)
     if not room:
         return ""
-    count_value = _row_value(rows, ROOM_COUNT_LABELS) or _extract_field(text, (
+    count_value = _row_value(rows, ROOM_COUNT_LABELS) or _text_label_value(text, ROOM_COUNT_LABELS, 40) or _extract_field(text, (
         r"No\.?\s*of\s*Rooms?", r"Number\s*of\s*Rooms?", r"Quantity",
         r"S[oố]\s*lượng\s*ph[oò]ng", r"S[oố]\s*ph[oò]ng\s*đặt",
     ), 40)
-    count = _parse_room_count(count_value) or 1
-    return f"{room} x{count}" if count > 1 else room
+    count = _parse_room_count(count_value)
+    return f"{room} x{count}" if count is not None else room
 
 
 MONEY_PATTERN = re.compile(

@@ -128,6 +128,8 @@ class BookingNotifierApp:
         self.alert_queue: list[BookingEvent] = []
         self.active_alert: BookingEvent | None = None
         self.active_popup: tk.Toplevel | None = None
+        self.active_guest_var: tk.StringVar | None = None
+        self.active_room_var: tk.StringVar | None = None
         self.queued_ids: set[str] = set()
         self.sound_active = False
         self.sound_uses_file = False
@@ -685,6 +687,7 @@ class BookingNotifierApp:
                     self._handle_booking_lifecycle(payload)
                 elif event_type == "history_changed":
                     self.refresh_history()
+                    self._refresh_pending_details()
                 elif event_type == "connection_test":
                     ok, text = payload
                     self.set_status(text)
@@ -859,8 +862,10 @@ class BookingNotifierApp:
             hero_text, text="KHÁCH ĐẾN HÔM NAY", bg=self.COLORS["primary"], fg="#BFC9D8",
             font=("Segoe UI Semibold", 9),
         ).pack(anchor="w")
+        self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or "Chưa đọc được tên khách")
+        self.active_room_var = tk.StringVar(master=popup, value=alert.room_type or "—")
         tk.Label(
-            hero_text, text=alert.guest_name or "Chưa đọc được tên khách",
+            hero_text, textvariable=self.active_guest_var,
             bg=self.COLORS["primary"], fg=self.COLORS["header_text"], font=("Segoe UI Semibold", 22),
             wraplength=430, justify="left",
         ).pack(anchor="w", pady=(6, 0))
@@ -892,7 +897,8 @@ class BookingNotifierApp:
                 fg=self.COLORS["muted"], font=("Segoe UI Semibold", 8),
             ).pack(side="left")
             tk.Label(
-                row, text=value, anchor="w", bg=self.COLORS["surface_alt"], fg=self.COLORS["text"],
+                row, **({"textvariable": self.active_room_var} if label == "Hạng phòng" else {"text": value}),
+                anchor="w", bg=self.COLORS["surface_alt"], fg=self.COLORS["text"],
                 font=("Segoe UI Semibold", 10), wraplength=380, justify="left",
             ).pack(side="left", fill="x", expand=True)
             if index < len(rows) - 1:
@@ -982,6 +988,32 @@ class BookingNotifierApp:
         if hasattr(self, "copy_feedback_var"):
             self.copy_feedback_var.set("Đã sao chép • Mở Excel và nhấn Ctrl+V")
 
+    def _refresh_pending_details(self) -> None:
+        """Update repaired details in-place: preserve the popup, focus and sound."""
+        pending = {event.storage_id: event for event in self.state.pending_for_date(date.today())}
+        alerts = list(self.alert_queue)
+        if self.active_alert is not None:
+            alerts.append(self.active_alert)
+        for alert in alerts:
+            saved = pending.get(alert.storage_id)
+            if saved is None or saved.checkin_date != alert.checkin_date:
+                continue
+            changed = False
+            for field in ("guest_name", "room_type"):
+                value = getattr(saved, field)
+                if value and value != getattr(alert, field):
+                    setattr(alert, field, value)
+                    changed = True
+            if alert is self.active_alert and changed:
+                if self.active_guest_var is not None:
+                    self.active_guest_var.set(alert.guest_name or "Chưa đọc được tên khách")
+                if self.active_room_var is not None:
+                    self.active_room_var.set(alert.room_type or "—")
+                try:
+                    self.f92_worker.notify(alert, play_sound=False)
+                except Exception:
+                    LOGGER.exception("Cannot refresh repaired booking details on F92")
+
     def show_active_context_menu(self, event: tk.Event) -> str:
         if not self.active_alert:
             return "break"
@@ -1002,6 +1034,8 @@ class BookingNotifierApp:
         if self.active_popup:
             self.active_popup.destroy()
             self.active_popup = None
+        self.active_guest_var = None
+        self.active_room_var = None
         self.refresh_history()
         self._show_next_alert()
 

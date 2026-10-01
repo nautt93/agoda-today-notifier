@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from email.message import EmailMessage
+from pathlib import Path
 
 from app import excel_tsv, excel_tsv_rows
 from booking_notifier.excel_export import excel_amount_value
@@ -79,3 +80,13 @@ Booked and Payable by Agoda: VND 1,031,040.00
 """)
     alert = parse_booking_message(message)
     assert excel_tsv(alert) == "\tNguyễn Văn An\t30\t2\t2\t1031040\t\t\tAgoda Superior Double Room"
+
+
+def test_bilingual_agoda_note_includes_source_room_and_single_room_quantity():
+    message = EmailMessage()
+    message["From"] = "booking@agoda.com"
+    message["Subject"] = "Booking confirmation"
+    html = (Path(__file__).parent / "fixtures" / "agoda_bilingual_confirmation.html").read_text(encoding="utf-8")
+    message.set_content(html, subtype="html")
+    event = parse_booking_message(message)
+    assert excel_tsv(event) == "\tMinh Trần\t30\t2\t2\t1200000\t\t\tAgoda Bunk Bed in Mixed Dormitory Room x1"

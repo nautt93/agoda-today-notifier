@@ -11,7 +11,7 @@ from .config import STATE_PATH, atomic_json_write
 from .models import BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent
 
 STATE_SCHEMA = 5
-PARSER_STATE_VERSION = "p8"
+PARSER_STATE_VERSION = "p9"
 
 
 def _now() -> str:
@@ -238,6 +238,33 @@ class StateStore:
                 if booking.get(field):
                     record[field] = booking[field]
 
+    def repair_known_confirmation(self, event: BookingEvent) -> bool:
+        """Enrich an already saved confirmation, even after its check-in day.
+
+        This never creates a booking/popup or applies lifecycle changes. Unseen
+        confirmations for other days remain ignored by the new-mail reader.
+        """
+        if event.status != BOOKING_STATUS_NEW or event.checkin_date is None:
+            return False
+        with self.lock:
+            records = [self.data["bookings"].get(event.storage_id, {})]
+            records.extend(self.data["history"])
+            records.extend(self.data["pending_alerts"])
+            changed = False
+            for record in records:
+                if (not record or record.get("checkin_date") != event.checkin_date.isoformat()
+                        or self._record_storage_id(record) != event.storage_id):
+                    continue
+                for field in ("guest_name", "room_type"):
+                    incoming = str(getattr(event, field)).strip()
+                    current = str(record.get(field, "")).strip()
+                    if incoming and (not current or len(incoming) > len(current)):
+                        record[field] = incoming
+                        changed = True
+            if changed:
+                self._save_locked()
+            return changed
+
     def remember_processed_aliases(self, *keys: str) -> None:
         """Remember extra UID aliases for a Message-ID that was already committed."""
         with self.lock:
@@ -286,6 +313,10 @@ class StateStore:
             history_record["pending_key"] = f"{storage_id}:{today_text}"
             self.data["history"].append(history_record)
             self.data["history"] = self.data["history"][-2000:]
+            if booking is not None:
+                # A popup may predate a parser repair. Do not write its stale
+                # short name/empty room back over the enriched saved details.
+                self._repair_booking_details_locked(booking, storage_id)
             self._save_locked()
 
     def history(self) -> list[dict[str, Any]]:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -109,3 +109,37 @@ def test_event_and_processed_keys_are_persisted_together(tmp_path):
     assert reloaded.is_processed("msg:1")
     assert len(reloaded.active_bookings()) == 1
     assert len(reloaded.pending_for_date(date(2026, 10, 1))) == 1
+
+
+def test_repair_known_past_confirmation_only_enriches_existing_details(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    yesterday = date.today() - timedelta(days=1)
+    event = BookingEvent(source="Agoda", booking_id="987654321", checkin_date=yesterday, guest_name="Minh")
+    alert = state.register_today_confirmation(event, ("old",), yesterday)
+    state.acknowledge(alert)
+    repaired = BookingEvent(source="Agoda", booking_id=event.booking_id, checkin_date=yesterday,
+                            guest_name="Minh Trần", room_type="Bunk Bed in Mixed Dormitory Room x1")
+    assert state.repair_known_confirmation(repaired)
+    reloaded = StateStore(state.path)
+    assert reloaded.history()[0]["guest_name"] == "Minh Trần"
+    assert reloaded.history()[0]["room_type"] == "Bunk Bed in Mixed Dormitory Room x1"
+    assert len(reloaded.history()) == 1
+    assert reloaded.data["bookings"][event.storage_id]["alerted_for"] == yesterday.isoformat()
+    assert reloaded.data["pending_alerts"] == []
+    repaired.booking_id = "NEVER-SEEN"
+    assert not state.repair_known_confirmation(repaired)
+    assert len(state.data["bookings"]) == 1
+
+
+def test_acknowledging_stale_popup_keeps_repaired_guest_and_room(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    today = date.today()
+    original = BookingEvent(source="Agoda", booking_id="987654321", checkin_date=today, guest_name="Minh")
+    stale_alert = state.register_today_confirmation(original, ("old",), today)
+    repaired = BookingEvent(source="Agoda", booking_id=original.booking_id, checkin_date=today,
+                            guest_name="Minh Trần", room_type="Bunk Bed in Mixed Dormitory Room x1")
+    assert state.register_today_confirmation(repaired, ("new",), today) is None
+    state.acknowledge(stale_alert)
+    assert state.history()[0]["guest_name"] == "Minh Trần"
+    assert state.history()[0]["room_type"] == "Bunk Bed in Mixed Dormitory Room x1"
+    assert not state.pending_for_date(today)

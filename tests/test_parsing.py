@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 from email.message import EmailMessage
+from pathlib import Path
 
 import pytest
 
@@ -67,7 +68,7 @@ def test_agoda_customer_info_and_room_summary_are_read_in_full():
 
     assert alert is not None
     assert alert.guest_name == "NGUYEN VAN AN"
-    assert alert.room_type == "Deluxe Double Room x2; Family Suite"
+    assert alert.room_type == "Deluxe Double Room x2; Family Suite x1"
 
 
 def test_agoda_separate_first_last_name_and_room_grid_are_supported():
@@ -331,7 +332,7 @@ Hạng phòng: Deluxe Double
 No. of Rooms: 1
 """))
     assert event.guest_name == "Jane Doe"
-    assert event.room_type == "Deluxe Double"
+    assert event.room_type == "Deluxe Double x1"
 
 
 def test_empty_fields_do_not_take_the_next_labels_as_values():
@@ -351,7 +352,7 @@ Superior Double Room
 1 x Family Suite
 Check-out: 02/10/2026
 """))
-    assert event.room_type == "Superior Double Room x2; Family Suite"
+    assert event.room_type == "Superior Double Room x2; Family Suite x1"
 
 
 def test_rich_non_table_html_wins_over_shortened_plain_name():
@@ -372,4 +373,58 @@ Double Room
 Suite
 Phone: +84 900 000 000
 """))
-    assert event.room_type == "Deluxe Double Room x2; Family Suite"
+    assert event.room_type == "Deluxe Double Room x2; Family Suite x1"
+
+
+@pytest.mark.parametrize("quantity", [1, 2, 3])
+def test_agoda_bilingual_voucher_reads_full_name_room_and_quantity(quantity):
+    html = (Path(__file__).parent / "fixtures" / "agoda_bilingual_confirmation.html").read_text(encoding="utf-8")
+    html = html.replace("</td><td>1</td><td>2 Adults", f"</td><td>{quantity}</td><td>2 Adults")
+    message = detail_message("Agoda", "Lead Guest Name: Minh", html)
+    event = parse_booking_message(message)
+    assert event.guest_name == "Minh Trần"
+    assert event.room_type == f"Bunk Bed in Mixed Dormitory Room x{quantity}"
+    assert event.checkin_date == date(2026, 9, 30)
+    assert event.checkout_date == date(2026, 10, 2)
+    assert event.total_revenue == "VND 1,200,000.00"
+
+
+def test_plain_stacked_bilingual_first_last_names_are_combined_before_partial_name():
+    event = parse_booking_message(detail_message("Agoda", """Guest Name: Minh
+Customer First Name
+Tên Khách Hàng
+Minh
+Customer Last Name
+Họ Khách Hàng
+Trần
+Room Type: Deluxe King
+No. of Rooms: 1
+"""))
+    assert event.guest_name == "Minh Trần"
+    assert event.room_type == "Deluxe King x1"
+
+
+def test_bilingual_matching_never_treats_room_code_as_room_name():
+    message = detail_message("Agoda", "Guest Name: Jane Doe", """<table>
+    <tr><td>Room Type Code</td><td>DO-NOT-DISPLAY</td></tr>
+    <tr><td>Room Type Name<br>Loại Phòng</td><td>Deluxe King</td></tr>
+    <tr><td>Number of Rooms<br>Số phòng</td><td>1</td></tr></table>""")
+    assert parse_booking_message(message).room_type == "Deluxe King x1"
+
+
+def test_stacked_bilingual_room_name_and_quantity_in_plain_text():
+    event = parse_booking_message(detail_message("Agoda", """Guest Name
+Tên khách
+Minh Trần
+Room Type
+Loại Phòng
+Bunk Bed in Mixed Dormitory Room
+No. of Rooms
+Số phòng
+1
+Occupancy
+Số người
+2 Adults
+"""))
+    assert event.guest_name == "Minh Trần"
+    assert event.room_type == "Bunk Bed in Mixed Dormitory Room x1"
