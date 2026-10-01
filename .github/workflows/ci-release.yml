@@ -22,6 +22,16 @@ jobs:
       - run: python -m pip install -r requirements-build.txt
       - run: python -m ruff check .
       - run: python -m pytest -q
+        env:
+          BOOKING_UI_SCREENSHOT_DIR: ${{ runner.temp }}/booking-popup-previews
+      - name: Save Windows popup previews
+        if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: windows-popup-previews
+          path: ${{ runner.temp }}/booking-popup-previews/*.png
+          if-no-files-found: warn
+          retention-days: 7
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -66,7 +76,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Sửa đúng mẫu Expedia New Booking thực tế: đọc đầy đủ tên khách và Room Type Name, tính số phòng từ Room Nights chia số đêm ở khi dữ liệu khớp, giữ x1 trong bảng mã xác nhận. Nguồn Expedia; ghi chú Excel gồm Expedia + hạng phòng + số lượng phòng. Popup và lịch sử dùng cùng format Excel 9 cột của bản 1.5.5. Kiểm thử email Expedia qua IMAP đến popup Windows và clipboard. Giữ cơ chế giống Agoda: chỉ đọc thư mới, chỉ báo booking mới check-in hôm nay, bỏ qua sửa/hủy và ngày khác; OTA an toàn." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Popup Agoda và Expedia chỉ có 2 nút lớn: Sao chép và Đóng thông báo. Chữ 18 pt, nút cao tối thiểu 96 px và rộng bằng nhau; luôn giữ nút ở cuối cửa sổ. Sao chép giữ popup mở; Đóng thông báo xác nhận và dừng âm thanh. Giữ Ctrl+C, chuột phải và đúng 9 cột Excel bản 1.5.5. Giữ sửa mẫu Expedia thực tế: đầy đủ tên, hạng phòng, số lượng kể cả x1; ghi chú Expedia + hạng phòng + số lượng. Chỉ báo booking mới check-in hôm nay, bỏ qua sửa/hủy và ngày khác; OTA an toàn." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

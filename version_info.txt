@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 7, 8, 0),
-    prodvers=(1, 7, 8, 0),
+    filevers=(1, 7, 9, 0),
+    prodvers=(1, 7, 9, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName', u'Moonlight Hotel'),
           StringStruct(u'FileDescription', u'Booking Check-in Hôm nay'),
-          StringStruct(u'FileVersion', u'1.7.8'),
+          StringStruct(u'FileVersion', u'1.7.9'),
           StringStruct(u'InternalName', u'BookingDesk'),
           StringStruct(u'OriginalFilename', u'Booking-Checkin-Hom-Nay.exe'),
           StringStruct(u'ProductName', u'Booking Check-in Hôm nay'),
-          StringStruct(u'ProductVersion', u'1.7.8'),
+          StringStruct(u'ProductVersion', u'1.7.9'),
         ],
       )
     ]),

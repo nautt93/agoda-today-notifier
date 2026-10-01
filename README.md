@@ -15,6 +15,7 @@
 - Phân biệt Expedia Collect và Hotel/Property Collect; ưu tiên đúng khoản tiền khách sạn thực nhận.
 - Nhận diện mẫu Expedia `New Booking`: đầy đủ tên khách, `Room Type Name` (không lấy `Room Type Code`), số phòng từ bảng mã xác nhận hoặc `Room Nights / số đêm ở`. Giữ `x1` cho một phòng; không đoán số lượng khi dữ liệu thiếu hoặc không khớp.
 - Hiển thị popup, phát âm thanh, lưu lịch sử và chép 9 cột sang Excel.
+- Popup Agoda và Expedia chỉ có 2 nút lớn: **Sao chép** và **Đóng thông báo**, cao tối thiểu 96 px, chữ 18 pt, rộng bằng nhau. Sao chép không đóng popup; đóng thông báo xác nhận booking và dừng âm thanh. Vẫn giữ chuột phải và Ctrl+C để sao chép.
 - Phát MP3 hoặc WAV như bản cũ; tệp âm thanh/thiết bị lỗi không đóng popup booking. Giờ yên lặng 00:00–08:00 giữ cảnh báo chờ và hiện sau 08:00 nếu bật.
 - Chép Excel đúng mẫu 1.5.5: STT trống | tên khách | số ngày đến | số ngày đi | số đêm | tiền dạng số | trống | trống | nguồn + hạng phòng + số lượng phòng đọc được. Dán bắt đầu từ cột A; không chèn mã booking hoặc tiêu đề email. Popup và lịch sử dùng chung format này.
 - Giao diện desktop tối–vàng cao cấp; nhấp đúp, Ctrl+C hoặc chuột phải để sao chép một/nhiều booking sang Excel.

@@ -196,6 +196,9 @@ class BookingNotifierApp:
             bordercolor=self.COLORS["border"], lightcolor=self.COLORS["surface"], darkcolor=self.COLORS["surface"],
         )
         style.map("Secondary.TButton", background=[("active", self.COLORS["surface_alt"])])
+        # Popup-only styles: large targets without changing the main toolbar.
+        for name in ("Popup.Primary.TButton", "Popup.Secondary.TButton"):
+            style.configure(name, font=("Segoe UI Semibold", 18), padding=(20, 24), focuscolor=self.COLORS["gold"])
         style.configure(
             "Danger.TButton", background=self.COLORS["surface"], foreground="#9E3F3F",
             bordercolor=self.COLORS["border"], lightcolor=self.COLORS["surface"], darkcolor=self.COLORS["surface"],
@@ -844,7 +847,7 @@ class BookingNotifierApp:
         popup = tk.Toplevel(self.root)
         self.active_popup = popup
         popup.title(f"{alert.source} • Check-in hôm nay")
-        width, height = 620, 570
+        width, height = 620, 640
         x = max(0, (popup.winfo_screenwidth() - width) // 2)
         y = max(0, (popup.winfo_screenheight() - height) // 2 - 20)
         popup.geometry(f"{width}x{height}+{x}+{y}")
@@ -874,6 +877,10 @@ class BookingNotifierApp:
             padx=14, pady=7,
         ).pack(side="right", anchor="n", padx=28, pady=24)
 
+        # Reserve the footer before packing the details, so long room names
+        # cannot push the two actions out of the window.
+        footer = tk.Frame(popup, bg=self.COLORS["surface"], padx=28, pady=20)
+        footer.pack(fill="x", side="bottom")
         body = tk.Frame(popup, bg=self.COLORS["surface"], padx=28, pady=20)
         body.pack(fill="both", expand=True)
         info_card = tk.Frame(
@@ -906,15 +913,21 @@ class BookingNotifierApp:
 
         self.copy_feedback_var = tk.StringVar(value="Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
         tk.Label(
-            body, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
+            footer, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
             font=("Segoe UI", 9),
-        ).pack(anchor="w", pady=(12, 0))
-        actions = tk.Frame(body, bg=self.COLORS["surface"])
-        actions.pack(fill="x", side="bottom", pady=(12, 0))
+        ).pack(anchor="w", pady=(0, 12))
+        actions = tk.Frame(footer, name="booking_actions", bg=self.COLORS["surface"])
+        actions.pack(fill="x")
+        actions.columnconfigure((0, 1), weight=1, uniform="popup_actions")
+        actions.rowconfigure(0, minsize=96)
         ttk.Button(
-            actions, text="Sao chép sang Excel", command=self.copy_active_alert, style="Secondary.TButton",
-        ).pack(side="left")
-        ttk.Button(actions, text="Đã nhận booking", command=self.acknowledge_alert, style="Accent.TButton").pack(side="right")
+            actions, name="copy_booking", text="Sao chép", command=self.copy_active_alert,
+            style="Popup.Primary.TButton", takefocus=True,
+        ).grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        ttk.Button(
+            actions, name="close_notification", text="Đóng thông báo", command=self.acknowledge_alert,
+            style="Popup.Secondary.TButton", takefocus=True,
+        ).grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         self.active_menu = tk.Menu(
             popup, tearoff=False, bg=self.COLORS["surface"], fg=self.COLORS["text"],
             activebackground=self.COLORS["gold"], activeforeground="#FFFFFF", relief="solid", borderwidth=1,
@@ -924,6 +937,12 @@ class BookingNotifierApp:
         popup.bind("<Button-2>", self.show_active_context_menu)
         popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
         popup.protocol("WM_DELETE_WINDOW", self.acknowledge_alert)
+        popup.update_idletasks()
+        # Accommodate Windows font/DPI settings without truncating either label.
+        button_width = max(child.winfo_reqwidth() for child in actions.winfo_children())
+        width = max(width, 2 * button_width + 12 + 56)
+        x = max(0, (popup.winfo_screenwidth() - width) // 2)
+        popup.geometry(f"{width}x{height}+{x}+{y}")
         self._present_alert_popup(popup)
         self.log(f"POPUP {alert.source} {alert.booking_id or '(không có mã)'}: đã mở thông báo check-in hôm nay.")
         # An audio driver/file error must never dismiss a valid booking notification.

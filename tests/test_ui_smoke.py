@@ -6,6 +6,7 @@ import sys
 import tkinter as tk
 from datetime import date, timedelta
 from pathlib import Path
+from tkinter import ttk
 from unittest.mock import Mock
 
 import pytest
@@ -24,6 +25,25 @@ def run_in_fresh_tk_process(node: str) -> bool:
         env={**os.environ, "BOOKING_UI_SMOKE_CHILD": "1"}, check=True, timeout=60,
     )
     return True
+
+
+def popup_action_buttons(popup):
+    def descendants(widget):
+        for child in widget.winfo_children():
+            yield child
+            yield from descendants(child)
+
+    buttons = [child for child in descendants(popup) if isinstance(child, ttk.Button)]
+    assert [button.cget("text") for button in buttons] == ["Sao chép", "Đóng thông báo"]
+    assert all(button.winfo_viewable() and button.winfo_height() >= 96 for button in buttons)
+    assert all(button.winfo_width() >= 240 for button in buttons)
+    assert abs(buttons[0].winfo_width() - buttons[1].winfo_width()) <= 1
+    for button in buttons:
+        assert button.winfo_width() >= button.winfo_reqwidth()
+        assert button.winfo_rooty() >= popup.winfo_rooty()
+        assert button.winfo_rooty() + button.winfo_height() <= popup.winfo_rooty() + popup.winfo_height()
+        assert button.cget("takefocus")
+    return buttons
 
 
 @pytest.mark.skipif(os.name != "nt", reason="The packaged desktop app targets Windows")
@@ -141,14 +161,30 @@ def test_email_to_visible_popup_while_minimized_even_if_sound_fails(tmp_path, mo
         assert bool(app.active_popup.attributes("-topmost"))
         assert app.active_popup.title() == f"{source} • Check-in hôm nay"
         assert root.state() != "iconic"
-        app.copy_active_alert()
+        copy_button, close_button = popup_action_buttons(app.active_popup)
+        screenshot_dir = os.environ.get("BOOKING_UI_SCREENSHOT_DIR")
+        if screenshot_dir:
+            from PIL import ImageGrab
+
+            target = Path(screenshot_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            popup = app.active_popup
+            root.update()
+            x, y = popup.winfo_rootx(), popup.winfo_rooty()
+            ImageGrab.grab(bbox=(x, y, x + popup.winfo_width(), y + popup.winfo_height())).save(
+                target / f"{source.lower()}-popup.png",
+            )
+        copy_button.invoke()
         cells = root.clipboard_get().split("\t")
         assert len(cells) == 9
         assert cells[0] == "" and cells[1] == guest
         assert cells[6:9] == ["", "", f"{source} {room}"]
         if source == "Expedia":
             assert cells[2:6] == [str(date.today().day), str((date.today() + timedelta(days=1)).day), "1", "345487"]
-        app.acknowledge_alert()
+        assert app.active_popup is not None  # Copy does not dismiss the alert.
+        close_button.invoke()
+        assert app.active_popup is None
+        assert not app.sound_active
         values = app.history_tree.item(app.history_tree.get_children()[0], "values")
         assert values[2:4] == (guest, room)
         monitor.scan_mailbox()
