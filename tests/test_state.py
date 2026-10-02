@@ -23,6 +23,24 @@ def booking(checkin: date, status: str = "new") -> BookingEvent:
     )
 
 
+def test_incomplete_recovery_candidates_only_known_today_and_deduplicated(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    today = date.today()
+    incomplete = BookingEvent(source="Agoda", booking_id="987654321", checkin_date=today, guest_name="Minh")
+    state.acknowledge(state.register_today_confirmation(incomplete, (), today))
+    state.register_today_confirmation(booking(today), (), today)
+    state.data["history"].extend([
+        incomplete.to_dict(),
+        {**incomplete.to_dict(), "booking_id": "987654322", "checkin_date": (today - timedelta(days=1)).isoformat()},
+        {**incomplete.to_dict(), "booking_id": "987654323", "status": "cancelled"},
+    ])
+    candidates = state.incomplete_confirmations(today)
+    assert len(candidates) == 1 and candidates[0]["booking_id"] == "987654321"
+    candidates[0]["guest_name"] = "External mutation"
+    assert state.history()[0]["guest_name"] == "Minh"
+    assert state.incomplete_confirmations(today, limit=0) == []
+
+
 def test_future_booking_is_not_saved_or_scheduled(tmp_path):
     state = StateStore(tmp_path / "state.json")
     with pytest.raises(ValueError, match="hôm nay"):

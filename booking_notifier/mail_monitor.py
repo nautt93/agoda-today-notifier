@@ -4,9 +4,11 @@ import hashlib
 import imaplib
 import logging
 import queue
+import re
 import socket
 import ssl
 import threading
+import time
 from datetime import date, datetime
 from email import message_from_bytes, policy
 from typing import Any
@@ -17,6 +19,8 @@ from .state import PARSER_STATE_VERSION, StateStore
 
 LOGGER = logging.getLogger(__name__)
 RECENT_MESSAGE_LIMIT = 20  # Bootstrap only; subsequent scans read every new UID.
+DETAIL_REPAIR_RETRY_SECONDS = 15 * 60
+DETAIL_REPAIR_MESSAGE_LIMIT = 3
 
 
 def is_quiet_hours(when: datetime | None = None, start_hour: int = 0, end_hour: int = 8) -> bool:
@@ -63,6 +67,8 @@ class ImapMonitor(threading.Thread):
         self.event_queue = event_queue
         self.stop_event = threading.Event()
         self.wake_event = threading.Event()
+        self.repair_requested = threading.Event()
+        self.detail_repair_attempts: dict[str, float] = {}
         identity = f"{self.config.get('imap_host', '')}|{self.config.get('email_address', '')}|INBOX".lower()
         self.identity_hash = hashlib.sha256(identity.encode()).hexdigest()[:20]
 
@@ -71,6 +77,7 @@ class ImapMonitor(threading.Thread):
         self.wake_event.set()
 
     def check_now(self) -> None:
+        self.repair_requested.set()
         self.wake_event.set()
 
     def emit(self, event_type: str, payload: Any) -> None:
@@ -102,6 +109,12 @@ class ImapMonitor(threading.Thread):
         today_count = 0
         other_day_count = 0
         self.emit("status", "Đang kiểm tra thư mới nhất Agoda + Expedia…")
+        if self.repair_requested.is_set():
+            self.detail_repair_attempts.clear()
+            self.repair_requested.clear()
+        # Snapshot BEFORE new mail: do not immediately fetch a new email twice.
+        incomplete = self.state.incomplete_confirmations(date.today())
+        read_uids: set[int] = set()
         with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
             client.login(address, self.password)
             status, counts = client.select("INBOX", readonly=True)
@@ -165,6 +178,7 @@ class ImapMonitor(threading.Thread):
                     continue
                 try:
                     # Direct body fetch matches 1.5.5 and avoids a second round-trip/header gate.
+                    read_uids.add(uid_number)
                     status, payload = client.uid("fetch", uid_raw, "(BODY.PEEK[])")
                 except imaplib.IMAP4.abort:
                     raise
@@ -241,11 +255,68 @@ class ImapMonitor(threading.Thread):
                 else:
                     self.emit("alert", alert)
                 self.emit("history_changed", None)
+            self._recover_incomplete_details(client, incomplete, read_uids)
         if processed_count:
             self.emit("history_changed", None)
         self.emit("log", f"Quét xong: {processed_count} thư mới; {today_count} booking hôm nay được ghi nhận; "
                   f"{other_day_count} booking ngày khác bỏ qua; {failed_count} thư đọc lỗi.")
         return processed_count
+
+    def _recover_incomplete_details(
+        self, client: Any, candidates: list[dict[str, Any]], read_uids: set[int],
+    ) -> None:
+        """Repair known cached rows outside the recent window; never queue an alert."""
+        today = date.today()
+        remaining = {StateStore._record_storage_id(record) for record in self.state.incomplete_confirmations(today)}
+        for record in candidates:
+            if self.stop_event.is_set():
+                break
+            storage_id = StateStore._record_storage_id(record)
+            booking_id = str(record.get("booking_id", ""))
+            if storage_id not in remaining or not re.fullmatch(r"[A-Za-z0-9-]{4,40}", booking_id):
+                continue
+            retry_key = f"{today.isoformat()}:{storage_id}"
+            now = time.monotonic()
+            last_attempt = self.detail_repair_attempts.get(retry_key)
+            if last_attempt is not None and now - last_attempt < DETAIL_REPAIR_RETRY_SECONDS:
+                continue
+            self.detail_repair_attempts[retry_key] = now
+            source = str(record.get("source", "Agoda"))
+            try:
+                # Server-side lookup, not downloading/scanning 500 email bodies.
+                criteria = ("HEADER", "Subject", f'"{booking_id}"') if source.lower() == "agoda" else ("TEXT", f'"{booking_id}"')
+                status, data = client.uid("search", None, *criteria)
+                if status != "OK" or not data or data[0] is None:
+                    self.emit("log", f"Chưa tìm được email gốc để bổ sung {source} {booking_id}; sẽ thử lại.")
+                    continue
+                matches = sorted({int(uid) for uid in data[0].split()}, reverse=True)[:DETAIL_REPAIR_MESSAGE_LIMIT]
+                changed = False
+                for uid in matches:
+                    if uid in read_uids or self.stop_event.is_set():
+                        continue
+                    status, payload = client.uid("fetch", str(uid).encode("ascii"), "(BODY.PEEK[])")
+                    raw = _response_bytes(payload) if status == "OK" else None
+                    if not raw:
+                        continue
+                    message = message_from_bytes(raw, policy=policy.default)
+                    if not is_trusted_booking_sender(str(message.get("From", ""))):
+                        continue
+                    event = parse_booking_message(message)
+                    if (event is None or event.status != BOOKING_STATUS_NEW
+                            or event.source.lower() != source.lower() or event.booking_id != booking_id
+                            or event.checkin_date != today):
+                        continue
+                    changed = self.state.repair_known_confirmation(event) or changed
+                if changed:
+                    self.emit("history_changed", None)
+                    self.emit("log", f"Đã bổ sung họ tên/hạng phòng từ email gốc của {source} {booking_id}; không báo lặp.")
+                else:
+                    self.emit("log", f"{source} {booking_id}: chưa bổ sung được dữ liệu; cần kiểm tra email gốc.")
+            except imaplib.IMAP4.abort:
+                raise
+            except Exception:
+                LOGGER.exception("Cannot recover cached booking %s", booking_id)
+                self.emit("log", f"Không đọc lại được email gốc của {source} {booking_id}; thư mới vẫn đã được xử lý.")
 
 
 def test_imap_connection(config: dict[str, Any], password: str) -> None:

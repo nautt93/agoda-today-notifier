@@ -388,6 +388,7 @@ def test_repaired_pending_details_update_same_popup_queue_and_excel(tmp_path, mo
         return
     import app as desktop
     from booking_notifier.config import ConfigStore
+    from booking_notifier.mail_monitor import ImapMonitor
     from booking_notifier.state import StateStore
 
     config_store = ConfigStore(tmp_path / "config.json")
@@ -409,11 +410,27 @@ def test_repaired_pending_details_update_same_popup_queue_and_excel(tmp_path, mo
         original_popup = app.active_popup
         assert app.active_guest_var.get() == "Minh"
         assert app.active_room_var.get() == "—"
+        from email.message import EmailMessage
+
+        messages = {}
         for booking_id in ("987654321", "987654322"):
-            repaired = BookingEvent(source=source, booking_id=booking_id, checkin_date=today,
-                                    guest_name="Minh Trần", room_type="Bunk Bed in Mixed Dormitory Room x1")
-            assert state.register_today_confirmation(repaired, (f"new:{booking_id}",), today) is None
-        app.events.put(("history_changed", None))
+            message = EmailMessage()
+            message["From"] = "booking@agoda.com" if source == "Agoda" else "booknotif@expedia.com"
+            message["Subject"] = f"{source} Booking confirmation {booking_id}"
+            message.set_content(
+                f"Booking ID: {booking_id}\nCheck-in: {today.isoformat()}\n"
+                "Guest Name: Minh Trần\nRoom Type: Bunk Bed in Mixed Dormitory Room\nRooms: 1",
+            )
+            messages[booking_id] = message.as_bytes()
+
+        class RecoveryClient:
+            def uid(self, command, *args):
+                if command == "search":
+                    return "OK", [args[-1].strip('"').encode("ascii")]
+                return "OK", [(b"BODY[]", messages[args[0].decode("ascii")])]
+
+        monitor = ImapMonitor(app.config, "test-secret", state, app.events)
+        monitor._recover_incomplete_details(RecoveryClient(), state.incomplete_confirmations(today), set())
         app._drain_events()
         root.update()
         assert app.active_popup is original_popup and original_popup.winfo_viewable()

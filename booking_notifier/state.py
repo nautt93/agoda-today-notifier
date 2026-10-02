@@ -265,6 +265,22 @@ class StateStore:
                 self._save_locked()
             return changed
 
+    def incomplete_confirmations(self, today: date, limit: int = 20) -> list[dict[str, Any]]:
+        """Return only known arrivals today needing name/room recovery, once per ID."""
+        placeholders = {"", "—", "-", "unknown", "xem trong email"}
+        with self.lock:
+            records = list(self.data["bookings"].values()) + self.data["history"] + self.data["pending_alerts"]
+            candidates: dict[str, dict[str, Any]] = {}
+            for record in records:
+                if (record.get("checkin_date") != today.isoformat()
+                        or record.get("status") in {"cancelled", "modified"}
+                        or not record.get("booking_id")
+                        or str(record.get("source", "Agoda")).lower() not in {"agoda", "expedia"}):
+                    continue
+                if any(str(record.get(field, "")).strip().lower() in placeholders for field in ("guest_name", "room_type")):
+                    candidates[self._record_storage_id(record)] = dict(record)
+            return list(candidates.values())[:max(0, limit)]
+
     def remember_processed_aliases(self, *keys: str) -> None:
         """Remember extra UID aliases for a Message-ID that was already committed."""
         with self.lock:

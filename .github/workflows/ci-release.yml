@@ -76,7 +76,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Bấm X hoặc thu nhỏ để ẩn xuống khay Windows thật. Popup Agoda/Expedia vẫn nổi độc lập, không tự mở cửa sổ chính, không mất cảnh báo đang chờ và không dừng âm thanh/quét email/F92. Biểu tượng khay có Mở Booking hôm nay, Cài đặt, Thoát ứng dụng; giữ Taskbar nếu khay lỗi. Khởi động ẩn vẫn hiện popup. Giữ giao diện chính gọn, popup 2 nút lớn, chép Excel 9 cột đúng mẫu cũ, đầy đủ tên/hạng phòng/số lượng và OTA an toàn." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Sửa dữ liệu cũ chỉ còn tên và thiếu hạng phòng: tự tìm đúng email của booking hôm nay đã lưu thiếu dữ liệu, kể cả ngoài 20 thư gần nhất. Bổ sung họ tên, hạng phòng và số lượng vào bảng, popup đang mở, hàng chờ và dòng Excel; không báo trùng, không quét 500 email, không đổi mốc UID hay nhận booking ngày khác/chỉnh sửa/hủy. Quét email ngay thử bổ sung lại ngay. Giữ popup 2 nút lớn, format Excel 9 cột, ẩn khay độc lập, F92 và OTA an toàn." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

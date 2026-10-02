@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 import ssl
 from datetime import date, timedelta
+from email import message_from_bytes, policy
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -130,7 +131,7 @@ def recent_message(source="Agoda", arrival=None, booking_id="987654321", subject
     message["Subject"] = subject
     message["Message-ID"] = f"<{source}-{booking_id}@example>"
     label = "Booking ID" if source == "Agoda" else "Itinerary ID"
-    message.set_content(f"{label}: {booking_id}\nGuest Name: Jane Doe\nCheck-in: {arrival or date.today().isoformat()}")
+    message.set_content(f"{label}: {booking_id}\nGuest Name: Jane Doe\nCheck-in: {arrival or date.today().isoformat()}\nRoom Type: Standard Room\nRooms: 1")
     return message.as_bytes()
 
 
@@ -170,6 +171,17 @@ def fake_inbox(monkeypatch, messages, before_fetch=None, uid_validity=None, sear
                         selected = ordered[-1:]
                 elif args[1] == "ALL":
                     selected = ordered
+                elif args[1] in {"HEADER", "TEXT"}:
+                    needle = args[-1].strip('"')
+                    selected = []
+                    for uid in ordered:
+                        raw = messages[uid]
+                        if isinstance(raw, Exception):
+                            continue
+                        message = message_from_bytes(raw, policy=policy.default)
+                        searchable = str(message.get("Subject", "")) if args[1] == "HEADER" else raw.decode("utf-8", errors="replace")
+                        if needle in searchable:
+                            selected.append(uid)
                 else:
                     lower = int(args[1].split(":")[0])
                     selected = ordered[lower - 1:]
@@ -197,6 +209,109 @@ def make_monitor(tmp_path, **config):
         **config,
     }, "secret", state, events)
     return monitor, state, events
+
+
+@pytest.mark.parametrize("source", ["Agoda", "Expedia"])
+def test_recover_four_cached_rows_outside_recent_twenty_without_realert(tmp_path, monkeypatch, source):
+    monitor, state, events = make_monitor(tmp_path)
+    today = date.today()
+    messages = {uid: b"From: newsletter@example.com\r\nSubject: News\r\n\r\nNews" for uid in range(5, 101)}
+    fixture = "agoda_bilingual_confirmation.html" if source == "Agoda" else "expedia_new_booking.html"
+    html = (Path(__file__).parent / "fixtures" / fixture).read_text(encoding="utf-8")
+    original_id = "987654321" if source == "Agoda" else "1234567890"
+    for uid in range(1, 5):
+        booking_id = str(1000000 + uid)
+        incomplete = BookingEvent(source=source, booking_id=booking_id, checkin_date=today, guest_name="Minh")
+        alert = state.register_today_confirmation(incomplete, (mail_monitor.mailbox_uid_key(monitor.identity_hash, "123", str(uid)),), today)
+        if uid <= 2:
+            state.acknowledge(alert)
+        message = EmailMessage()
+        message["From"] = "booking@agoda.com" if source == "Agoda" else "booknotif@expedia.com"
+        message["Subject"] = f"{source} Booking ID {booking_id} - CONFIRMED"
+        body = html.replace(original_id, booking_id)
+        body = body.replace("30-Sep-2026 (30-09-2026)", today.isoformat())
+        body = body.replace("Oct 13, 2026", today.isoformat())
+        body = body.replace("Oct 14, 2026", (today + timedelta(days=1)).isoformat())
+        message.set_content(body, subtype="html")
+        messages[uid] = message.as_bytes()
+    mailbox_key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(mailbox_key, [], minimum_cursor=100, parser_version=mail_monitor.PARSER_STATE_VERSION)
+    searches = []
+    fetched = fake_inbox(monkeypatch, messages, searches=searches)
+    assert monitor.scan_mailbox() == 0  # No new arrivals; targeted recovery only.
+    assert fetched == [1, 2, 3, 4]  # No 20/500-body scan, including already processed emails.
+    assert len(searches) == 5 and searches[0] == ("UID", "101:*")
+    expected_name = "Minh Trần" if source == "Agoda" else "MINH TRẦN"
+    expected_room = "Bunk Bed in Mixed Dormitory Room x1" if source == "Agoda" else "Deluxe Double Room - Room Only x1"
+    assert all(row["guest_name"] == expected_name and row["room_type"] == expected_room for row in state.history())
+    pending = state.pending_for_date(today)
+    assert len(pending) == 2 and all(item.guest_name == expected_name and item.room_type == expected_room for item in pending)
+    assert len(state.history()) == 2 and not any(kind in {"alert", "deferred_alert"} for kind, _ in events.queue)
+    assert any(kind == "history_changed" for kind, _ in events.queue)
+    assert state.mailbox_read_position(mailbox_key) == (100, [])
+    assert state.incomplete_confirmations(today) == []
+    fetched.clear()
+    searches.clear()
+    monitor.scan_mailbox()
+    assert fetched == [] and searches == [("UID", "101:*")]
+
+
+def test_recovery_retries_are_throttled_and_manual_scan_retries(tmp_path, monkeypatch):
+    monitor, state, _ = make_monitor(tmp_path)
+    incomplete = BookingEvent(source="Agoda", booking_id="987654321", checkin_date=date.today(), guest_name="Minh")
+    state.register_today_confirmation(incomplete, (), date.today())
+    key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(key, [], minimum_cursor=100, parser_version=mail_monitor.PARSER_STATE_VERSION)
+    searches = []
+    fake_inbox(monkeypatch, {}, searches=searches)
+    monitor.scan_mailbox()
+    assert searches[-1] == ("HEADER", "Subject", '"987654321"')
+    searches.clear()
+    monitor.scan_mailbox()
+    assert searches == [("UID", "101:*")]
+    monitor.check_now()
+    searches.clear()
+    monitor.scan_mailbox()
+    assert searches[-1] == ("HEADER", "Subject", '"987654321"')
+
+
+def test_targeted_recovery_reads_at_most_three_matches_and_ignores_other_days(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path)
+    today = date.today()
+    event = BookingEvent(source="Agoda", booking_id="987654321", checkin_date=today, guest_name="Minh")
+    state.acknowledge(state.register_today_confirmation(event, (), today))
+    key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(key, [], minimum_cursor=100, parser_version=mail_monitor.PARSER_STATE_VERSION)
+    messages = {uid: recent_message(arrival=(today + timedelta(days=1)).isoformat(), subject="Agoda Booking ID 987654321 - CONFIRMED") for uid in range(1, 11)}
+    fetched = fake_inbox(monkeypatch, messages)
+    monitor.scan_mailbox()
+    assert fetched == [10, 9, 8]
+    assert state.history()[0]["guest_name"] == "Minh" and not state.history()[0]["room_type"]
+    assert not any(kind == "alert" for kind, _ in events.queue)
+
+
+@pytest.mark.parametrize("invalid", ["sender", "id", "date", "modified", "cancelled", "provider"])
+def test_targeted_recovery_rejects_wrong_or_untrusted_message(tmp_path, monkeypatch, invalid):
+    monitor, state, events = make_monitor(tmp_path)
+    today = date.today()
+    incomplete = BookingEvent(source="Agoda", booking_id="987654321", checkin_date=today, guest_name="Minh")
+    state.acknowledge(state.register_today_confirmation(incomplete, (), today))
+    key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(key, [], minimum_cursor=100, parser_version=mail_monitor.PARSER_STATE_VERSION)
+    message = EmailMessage()
+    message["From"] = "spoof@example.com" if invalid == "sender" else "booking@agoda.com"
+    if invalid == "provider":
+        message.replace_header("From", "booknotif@expedia.com")
+    subject = {"modified": "Booking modified", "cancelled": "Booking cancelled"}.get(invalid, "Booking confirmation")
+    message["Subject"] = f"{subject} 987654321"
+    booking_id = "987654322" if invalid == "id" else "987654321"
+    arrival = today + timedelta(days=1) if invalid == "date" else today
+    message.set_content(f"Booking ID: {booking_id}\nCheck-in: {arrival.isoformat()}\nGuest Name: Minh Tran\nRoom Type: Deluxe\nRooms: 1")
+    fetched = fake_inbox(monkeypatch, {1: message.as_bytes()})
+    monitor.scan_mailbox()
+    assert fetched == [1]
+    assert state.history()[0]["guest_name"] == "Minh" and not state.history()[0]["room_type"]
+    assert not any(kind in {"alert", "history_changed"} for kind, _ in events.queue)
 
 
 @pytest.mark.parametrize(("offset", "subject", "expected"), [
