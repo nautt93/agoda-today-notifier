@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.13",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.13/Booking-Checkin-Hom-Nay-1.7.13.exe",
-  "sha256": "34f57dffba6081a2f0ca67e5bf3cb406580d6ec850dfaeef71fee1ecbc70d726",
-  "size": 23954551,
-  "notes": "Âm thanh MP3/WAV riêng cho Agoda và Expedia trong Cài đặt, có Chọn tệp và Nghe thử từng nguồn, tự dừng nghe thử sau 4 giây. Phát đúng file theo nguồn popup và lặp đến khi đóng thông báo; Sao chép/ẩn khay không dừng âm báo. Giữ file chung cũ làm dự phòng; có hai file WAV mặc định khác nhau nếu chưa chọn file. Booking đến luôn ưu tiên hơn nghe thử, không ngắt âm báo booking đang chờ, hủy hẹn giờ cũ để không chồng chuông. File lỗi chuyển dự phòng, popup vẫn mở. Giữ đầy đủ tên/phòng, Excel 9 cột, chỉ báo booking mới check-in hôm nay, F92 và OTA an toàn.",
-  "signature": "O+6aGtdKNEmGrvoqcQ5DgTVrhiSJ/C2BIoFA/GeTRtCbW4h0T7n6qIrPsdQGfdcohSgDAVAtlqTnv3/ZeS32Bw=="
+  "version": "1.7.14",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.14/Booking-Checkin-Hom-Nay-1.7.14.exe",
+  "sha256": "57c7c82b130d19357e2bbf0f99fd50115953f3de3d69bc5bb5b42b2d700002a4",
+  "size": 23990840,
+  "notes": "Expedia có nút In phiếu 1 trang A4 trong popup và menu chuột phải. Phiếu tóm tắt đủ tên khách, liên hệ, các phòng/số lượng, ngày đến/đi, khoản thu và thông tin thẻ có trong email; giữ riêng các thẻ của từng nhóm phòng. Xem trước rồi chọn máy in Windows; ép A4 dọc, chỉ một trang/một bản, không cắt trang đầu email. Thông tin thẻ chỉ xử lý trong bộ nhớ, không lưu lịch sử/log/Excel/tệp tạm; bảo quản phiếu và hàng đợi máy in an toàn. In/hủy in không xác nhận booking hay dừng âm báo, vẫn dùng khi ẩn khay. Giữ hai nút Sao chép/Đóng lớn, Agoda không đổi. Giữ Excel 9 cột, âm thanh riêng từng nguồn, chỉ báo check-in hôm nay, F92 và OTA an toàn.",
+  "signature": "JhZaCGZ/N9DY0IodatHU6KrJ6tZW+b8V0GvFAGfuQvdtesr7BEokV7NHGQBq3mfsJ5J5hw8BYpbGBGFJ9unSDw=="
 }
