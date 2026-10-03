@@ -92,6 +92,8 @@ def test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge(tmp_p
     try:
         wait_for_tray(app)
         state.register_today_confirmation(data.booking, ["test-print"], date.today())
+        # The main table lists acknowledged history, while this live popup remains pending.
+        monkeypatch.setattr(state, "history", lambda: [data.booking.to_dict()])
         app.refresh_history()
         app.on_close()
         root.update()

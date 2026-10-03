@@ -4,6 +4,7 @@ import ctypes as ct
 import os
 import queue
 import re
+import shutil
 import time
 from datetime import date
 from email import policy
@@ -49,7 +50,8 @@ def test_full_guest_room_contact_and_card_fields_without_address_pollution():
     assert card["address"] == "1 Test Street | Test City, WA 00000 | USA"
     assert card["pan"] == "4111-1111-1111-1111"
     assert "pan" not in data.fields and "pan" not in room
-    assert "4111" not in repr(data) and "000" not in repr(data.cards[0])
+    assert card["pan"] not in repr(data) and "cvv" not in repr(data.cards[0])
+    assert repr(data) == object.__repr__(data) and repr(data.cards[0]) == object.__repr__(data.cards[0])
     assert not any(key in data.booking.to_dict() for key in ("pan", "cvv", "card"))
 
 
@@ -283,7 +285,13 @@ def test_windows_structs_and_actual_one_page_virtual_pdf_print(tmp_path):
             time.sleep(0.1)
         raw = target.read_bytes()
         assert len(re.findall(rb"/Type\s*/Page\b", raw)) == 1
-        media = re.search(rb"/MediaBox\s*\[\s*0\s+0\s+([\d.]+)\s+([\d.]+)\s*\]", raw)
-        assert media and abs(float(media[1]) - 595.28) < 2 and abs(float(media[2]) - 841.89) < 2
+        media = re.search(rb"/MediaBox\s*\[\s*([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s+([\d.eE+-]+)\s*\]", raw)
+        if os.environ.get("BOOKING_UI_SCREENSHOT_DIR"):
+            directory = Path(os.environ["BOOKING_UI_SCREENSHOT_DIR"])
+            directory.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(target, directory / "synthetic-expedia-printed-a4.pdf")
+        assert media, re.findall(rb".{0,20}MediaBox.{0,100}", raw)
+        assert abs(float(media[3]) - float(media[1]) - 595.28) < 2
+        assert abs(float(media[4]) - float(media[2]) - 841.89) < 2
     finally:
         spool.ClosePrinter(handle)

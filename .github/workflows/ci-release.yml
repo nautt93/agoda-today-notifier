@@ -29,7 +29,9 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: windows-popup-previews
-          path: ${{ runner.temp }}/booking-popup-previews/*.png
+          path: |
+            ${{ runner.temp }}/booking-popup-previews/*.png
+            ${{ runner.temp }}/booking-popup-previews/synthetic-expedia-printed-a4.pdf
           if-no-files-found: warn
           retention-days: 7
 
