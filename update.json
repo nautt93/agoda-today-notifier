@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.12",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.12/Booking-Checkin-Hom-Nay-1.7.12.exe",
-  "sha256": "05ac1c6d233dd26b26c82140613712fa99ab05d4f8f77ec7e6598accc12e88f7",
-  "size": 23831485,
-  "notes": "Sửa dữ liệu cũ chỉ còn tên và thiếu hạng phòng: tự tìm đúng email của booking hôm nay đã lưu thiếu dữ liệu, kể cả ngoài 20 thư gần nhất. Bổ sung họ tên, hạng phòng và số lượng vào bảng, popup đang mở, hàng chờ và dòng Excel; không báo trùng, không quét 500 email, không đổi mốc UID hay nhận booking ngày khác/chỉnh sửa/hủy. Quét email ngay thử bổ sung lại ngay. Giữ popup 2 nút lớn, format Excel 9 cột, ẩn khay độc lập, F92 và OTA an toàn.",
-  "signature": "NAFlLFVqVEivNBPcGafyzLxosjjVf1B/xH0ahZ3HhRNU5UkJLMQctn9uvY8fJvCH2eIThnZHmJl/gGPag+YPBA=="
+  "version": "1.7.13",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.13/Booking-Checkin-Hom-Nay-1.7.13.exe",
+  "sha256": "34f57dffba6081a2f0ca67e5bf3cb406580d6ec850dfaeef71fee1ecbc70d726",
+  "size": 23954551,
+  "notes": "Âm thanh MP3/WAV riêng cho Agoda và Expedia trong Cài đặt, có Chọn tệp và Nghe thử từng nguồn, tự dừng nghe thử sau 4 giây. Phát đúng file theo nguồn popup và lặp đến khi đóng thông báo; Sao chép/ẩn khay không dừng âm báo. Giữ file chung cũ làm dự phòng; có hai file WAV mặc định khác nhau nếu chưa chọn file. Booking đến luôn ưu tiên hơn nghe thử, không ngắt âm báo booking đang chờ, hủy hẹn giờ cũ để không chồng chuông. File lỗi chuyển dự phòng, popup vẫn mở. Giữ đầy đủ tên/phòng, Excel 9 cột, chỉ báo booking mới check-in hôm nay, F92 và OTA an toàn.",
+  "signature": "O+6aGtdKNEmGrvoqcQ5DgTVrhiSJ/C2BIoFA/GeTRtCbW4h0T7n6qIrPsdQGfdcohSgDAVAtlqTnv3/ZeS32Bw=="
 }
