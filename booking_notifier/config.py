@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.12"
+APP_VERSION = "1.7.13"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -30,6 +30,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "poll_seconds": 60,
     "scan_days": 90,
     "sound_file": "",
+    "agoda_sound_file": "",
+    "expedia_sound_file": "",
     "f92_enabled": True,
     "f92_port": "AUTO",
     "f92_sound_index": 4,

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import wave
 from pathlib import Path
 
 
@@ -60,8 +61,14 @@ def main() -> None:
                     if not any("Windows system tray ready" in log.read_text(encoding="utf-8") for log in logs):
                         time.sleep(0.25)
                         continue
+                    sounds = [config_dir / "sounds" / f"{source}-chime-v1.wav" for source in ("agoda", "expedia")]
+                    assert sounds[0].read_bytes() != sounds[1].read_bytes(), "Provider sounds must differ"
+                    for sound_file in sounds:
+                        with wave.open(str(sound_file), "rb") as sound:
+                            assert sound.getnframes() == sound.getframerate() * 3
                     print("PASS: frozen updater handoff, EXE replacement, real Tk UI startup confirmed.", flush=True)
                     print("PASS: packaged Windows tray backend starts successfully.", flush=True)
+                    print("PASS: packaged app creates two distinct provider WAV files in user data.", flush=True)
                     return
                 time.sleep(0.25)
             error_log = config_dir / "update-error.log"

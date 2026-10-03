@@ -12,7 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-from booking_notifier.audio import WindowsMciAudioPlayer
+from booking_notifier.audio import WindowsMciAudioPlayer, configured_sound_paths, default_source_sound
 from booking_notifier.config import (
     APP_DIR,
     APP_NAME,
@@ -137,6 +137,8 @@ class BookingNotifierApp:
         self.queued_ids: set[str] = set()
         self.sound_active = False
         self.sound_uses_file = False
+        self.sound_repeat_job: str | None = None
+        self.sound_preview_job: str | None = None
         self.mp3_player = WindowsMciAudioPlayer()
         self.closing = False
         self.update_busy = False
@@ -144,6 +146,12 @@ class BookingNotifierApp:
         self._build_styles()
         self._build_ui()
         self._load_config()
+        if os.name == "nt":
+            try:
+                for source in self.source_sound_vars:
+                    default_source_sound(source, APP_DIR / "sounds")
+            except Exception:
+                LOGGER.exception("Cannot prepare built-in source sounds; alerts retain fallback audio")
         self.f92_worker = F92Worker(self.events, self.config)
         self.f92_worker.start()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -346,6 +354,7 @@ class BookingNotifierApp:
 
     def close_settings(self) -> None:
         # Closing settings must not stop monitoring or discard unsaved fields.
+        self.stop_sound_preview()
         self.settings_window.withdraw()
         if self.active_popup is not None:
             self.active_popup.lift()
@@ -437,6 +446,7 @@ class BookingNotifierApp:
         self.poll_var = tk.StringVar()
         self.scan_days_var = tk.StringVar()
         self.sound_var = tk.StringVar()
+        self.source_sound_vars = {source: tk.StringVar() for source in ("Agoda", "Expedia")}
         self.quiet_var = tk.BooleanVar()
         self.start_windows_var = tk.BooleanVar()
         self.start_minimized_var = tk.BooleanVar()
@@ -472,13 +482,6 @@ class BookingNotifierApp:
         preferences.pack(fill="x", pady=(0, 12))
         preferences.columnconfigure(0, weight=1)
         preferences.columnconfigure(1, weight=1)
-        sound_block = ttk.Frame(preferences, style="Card.TFrame")
-        sound_block.grid(row=0, column=0, columnspan=2, sticky="ew", padx=6, pady=(2, 12))
-        ttk.Label(sound_block, text="Âm thanh WAV tùy chọn", style="Field.TLabel").pack(anchor="w", pady=(0, 6))
-        sound_frame = ttk.Frame(sound_block, style="Card.TFrame")
-        sound_frame.pack(fill="x")
-        ttk.Entry(sound_frame, textvariable=self.sound_var).pack(side="left", fill="x", expand=True)
-        ttk.Button(sound_frame, text="Chọn tệp", command=self.choose_sound, style="Secondary.TButton").pack(side="left", padx=(8, 0))
         checks = (
             ("Giờ yên lặng 00:00–08:00", self.quiet_var),
             ("Khởi động cùng Windows", self.start_windows_var),
@@ -487,7 +490,36 @@ class BookingNotifierApp:
         for index, (text, variable) in enumerate(checks):
             ttk.Checkbutton(
                 preferences, text=text, variable=variable, style="Card.TCheckbutton",
-            ).grid(row=1 + index // 2, column=index % 2, sticky="w", padx=6, pady=5)
+            ).grid(row=index // 2, column=index % 2, sticky="w", padx=6, pady=5)
+
+        sounds = ttk.LabelFrame(content, text="  Âm thanh theo nguồn booking  ", style="Section.TLabelframe", padding=(18, 14))
+        sounds.pack(fill="x", pady=(0, 12))
+        self.sound_settings_frame = sounds
+        self.sound_preview_buttons = {}
+        self.sound_choose_buttons = {}
+        self.source_sound_entries = {}
+        for source, variable in self.source_sound_vars.items():
+            block = ttk.Frame(sounds, style="Card.TFrame")
+            block.pack(fill="x", pady=(0, 10))
+            ttk.Label(block, text=f"{source} • MP3 / WAV", style="Field.TLabel").pack(anchor="w", pady=(0, 5))
+            row = ttk.Frame(block, style="Card.TFrame")
+            row.pack(fill="x")
+            entry = ttk.Entry(row, textvariable=variable)
+            entry.pack(side="left", fill="x", expand=True)
+            self.source_sound_entries[source] = entry
+            choose = ttk.Button(row, text="Chọn tệp", command=lambda s=source: self.choose_sound(s), style="Secondary.TButton")
+            choose.pack(side="left", padx=(8, 0))
+            self.sound_choose_buttons[source] = choose
+            preview = ttk.Button(row, text=f"Nghe thử {source}", command=lambda s=source: self.preview_source_sound(s), style="Secondary.TButton")
+            preview.pack(side="left", padx=(8, 0))
+            self.sound_preview_buttons[source] = preview
+        ttk.Label(sounds, text="Để trống: dùng âm thanh chung bên dưới; nếu không có, dùng chuông riêng mặc định.\nAgoda: 2 nốt cao. Expedia: 3 nốt trầm hơn. Nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(sounds, text="Âm thanh chung dự phòng (giữ cấu hình cũ)", style="Field.TLabel").pack(anchor="w", pady=(0, 5))
+        common = ttk.Frame(sounds, style="Card.TFrame")
+        common.pack(fill="x")
+        ttk.Entry(common, textvariable=self.sound_var).pack(side="left", fill="x", expand=True)
+        ttk.Button(common, text="Chọn tệp", command=self.choose_sound, style="Secondary.TButton").pack(side="left", padx=(8, 0))
+        ttk.Button(common, text="Dừng nghe thử", command=self.stop_sound_preview, style="Secondary.TButton").pack(side="left", padx=(8, 0))
 
         f92 = ttk.LabelFrame(
             content, text="  Màn hình F92  ", style="Section.TLabelframe", padding=(18, 14),
@@ -573,6 +605,8 @@ class BookingNotifierApp:
         self.poll_var.set(str(c["poll_seconds"]))
         self.scan_days_var.set(str(c["scan_days"]))
         self.sound_var.set(str(c["sound_file"]))
+        for source, variable in self.source_sound_vars.items():
+            variable.set(str(c.get(f"{source.lower()}_sound_file", "")))
         self.quiet_var.set(bool(c["quiet_hours_enabled"]))
         self.start_windows_var.set(bool(c["start_with_windows"]))
         self.start_minimized_var.set(bool(c["start_minimized"]))
@@ -593,6 +627,7 @@ class BookingNotifierApp:
             "poll_seconds": min(3600, max(30, int(self.poll_var.get()))),
             "scan_days": min(365, max(1, int(self.scan_days_var.get()))),
             "sound_file": self.sound_var.get().strip(),
+            **{f"{source.lower()}_sound_file": variable.get().strip() for source, variable in self.source_sound_vars.items()},
             "quiet_hours_enabled": self.quiet_var.get(),
             "start_with_windows": self.start_windows_var.get(),
             "start_minimized": self.start_minimized_var.get(),
@@ -612,10 +647,32 @@ class BookingNotifierApp:
             self.host_var.set(host)
         self.port_var.set(str(port))
 
-    def choose_sound(self) -> None:
-        value = filedialog.askopenfilename(title="Chọn âm thanh", filetypes=[("Âm thanh", "*.mp3 *.wav"), ("Tất cả", "*.*")])
+    def choose_sound(self, source: str | None = None) -> None:
+        value = filedialog.askopenfilename(parent=self.settings_window, title=f"Chọn âm thanh {source or 'chung'}", filetypes=[("Âm thanh MP3 / WAV", "*.mp3 *.wav"), ("Tất cả", "*.*")])
         if value:
-            self.sound_var.set(value)
+            variable = self.source_sound_vars[source] if source else self.sound_var
+            variable.set(value)
+
+    def preview_source_sound(self, source: str) -> None:
+        if self.active_alert is not None:
+            messagebox.showinfo("Đang có booking", "Hãy đóng thông báo booking trước khi nghe thử để không ngắt âm báo đang phát.", parent=self.settings_window)
+            return
+        draft = {
+            "sound_file": self.sound_var.get().strip(),
+            **{f"{s.lower()}_sound_file": v.get().strip() for s, v in self.source_sound_vars.items()},
+        }
+        try:
+            self._start_source_sound(source, draft)
+            self.sound_preview_job = self.root.after(4000, self.stop_sound_preview)
+            self.log(f"Nghe thử âm thanh {source} (4 giây); chưa lưu cấu hình.")
+        except Exception as exc:
+            self.stop_sound()
+            messagebox.showerror("Không nghe thử được", str(exc), parent=self.settings_window)
+
+    def stop_sound_preview(self) -> None:
+        # This button must never silence an actual pending booking.
+        if self.active_alert is None:
+            self.stop_sound()
 
     def save_and_start(self) -> None:
         try:
@@ -1043,46 +1100,74 @@ class BookingNotifierApp:
             self.log(f"F92: {exc}; popup booking vẫn mở.")
 
     def play_sound(self) -> None:
+        source = self.active_alert.source if self.active_alert is not None else ""
+        self._start_source_sound(source, self.config)
+
+    def _start_source_sound(self, source: str, config: dict[str, Any]) -> None:
         self.stop_sound()
         self.sound_active = True
         self.sound_uses_file = False
-        sound = str(self.config.get("sound_file", ""))
         if os.name == "nt":
             import winsound
 
-            try:
-                if sound and Path(sound).is_file():
-                    if Path(sound).suffix.lower() == ".mp3":
-                        self.mp3_player.play_loop(Path(sound))
+            def play_file(path: Path) -> bool:
+                try:
+                    if not path.is_file():
+                        raise FileNotFoundError("Không tìm thấy tệp")
+                    if path.suffix.lower() == ".mp3":
+                        self.mp3_player.play_loop(path)
+                    elif path.suffix.lower() == ".wav":
+                        winsound.PlaySound(str(path), winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP | winsound.SND_NODEFAULT)
                     else:
-                        winsound.PlaySound(sound, winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_LOOP)
+                        raise ValueError("Chỉ hỗ trợ MP3 / WAV")
+                    return True
+                except Exception:
+                    LOGGER.exception("Cannot play %s sound file", source)
+                    self.mp3_player.stop()
+                    self.log(f"Không phát được tệp âm thanh {source}; đang thử âm thanh dự phòng.")
+                    return False
+
+            for path in configured_sound_paths(config, source):
+                if play_file(path):
                     self.sound_uses_file = True
-            except Exception:
-                LOGGER.exception("Cannot play configured sound; falling back to Windows beep")
-                self.log("Không phát được tệp âm thanh; đang dùng chuông Windows.")
+                    break
+            if not self.sound_uses_file and source.strip().lower() in {"agoda", "expedia"}:
+                try:
+                    self.sound_uses_file = play_file(default_source_sound(source, APP_DIR / "sounds"))
+                except Exception:
+                    LOGGER.exception("Cannot create built-in source sound")
+                    self.log(f"Không tạo được chuông mặc định {source}; đang dùng chuông Windows.")
             if not self.sound_uses_file:
                 winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-        self.root.after(3000, self._repeat_beep)
+        if not self.sound_uses_file:
+            self.sound_repeat_job = self.root.after(3000, self._repeat_beep)
 
     def _repeat_beep(self) -> None:
+        self.sound_repeat_job = None
         if not self.sound_active:
             return
         if os.name == "nt" and not self.sound_uses_file:
             import winsound
 
             winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-        self.root.after(3000, self._repeat_beep)
+        self.sound_repeat_job = self.root.after(3000, self._repeat_beep)
 
     def stop_sound(self) -> None:
         self.sound_active = False
+        for name in ("sound_repeat_job", "sound_preview_job"):
+            job = getattr(self, name, None)
+            if job is not None:
+                self.root.after_cancel(job)
+                setattr(self, name, None)
         if os.name == "nt":
             import winsound
 
             try:
-                winsound.PlaySound(None, winsound.SND_PURGE)
-                self.mp3_player.stop()
+                winsound.PlaySound(None, 0)
             except Exception:
                 LOGGER.exception("Cannot stop booking sound")
+            finally:
+                self.mp3_player.stop()
 
     def copy_active_alert(self) -> None:
         if not self.active_alert:

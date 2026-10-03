@@ -59,6 +59,91 @@ def wait_for_tray(app):
     app._drain_events()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows source audio controls and tray popup queue")
+def test_source_sound_settings_preview_and_popup_queue_in_tray(tmp_path, monkeypatch):
+    if run_in_fresh_tk_process("test_source_sound_settings_preview_and_popup_queue_in_tray"):
+        return
+    import winsound
+
+    import app as desktop
+    from booking_notifier.audio import default_source_sound
+    from booking_notifier.config import ConfigStore
+    from booking_notifier.state import StateStore
+
+    store = ConfigStore(tmp_path / "config.json")
+    store.save({"f92_enabled": False, "quiet_hours_enabled": False, "start_with_windows": False, "update_manifest_source": ""})
+    state = StateStore(tmp_path / "state.json")
+    monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
+    monkeypatch.setattr(desktop, "ConfigStore", lambda: store)
+    monkeypatch.setattr(desktop, "StateStore", lambda: state)
+    sound_calls = Mock()
+    monkeypatch.setattr(winsound, "PlaySound", sound_calls)
+    monkeypatch.setattr(winsound, "MessageBeep", Mock())
+    root = tk.Tk()
+    app = BookingNotifierApp(root)
+    try:
+        wait_for_tray(app)
+        app.open_settings()
+        root.update()
+        app.settings_canvas.yview_moveto(0.45)
+        root.update()
+        assert set(app.source_sound_vars) == {"Agoda", "Expedia"}
+        for source in app.source_sound_vars:
+            assert app.sound_preview_buttons[source].cget("text") == f"Nghe thử {source}"
+            assert app.sound_choose_buttons[source].cget("text") == "Chọn tệp"
+        screenshot_dir = os.environ.get("BOOKING_UI_SCREENSHOT_DIR")
+        if screenshot_dir:
+            from PIL import ImageGrab
+
+            window = app.settings_window
+            x, y = window.winfo_rootx(), window.winfo_rooty()
+            target = Path(screenshot_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            ImageGrab.grab(bbox=(x, y, x + window.winfo_width(), y + window.winfo_height())).save(target / "source-sounds-settings.png")
+
+        agoda = default_source_sound("Agoda", tmp_path / "âm thanh riêng")
+        expedia = default_source_sound("Expedia", tmp_path / "âm thanh riêng")
+        for source, path in (("Agoda", agoda), ("Expedia", expedia)):
+            monkeypatch.setattr(desktop.filedialog, "askopenfilename", Mock(return_value=str(path)))
+            app.sound_choose_buttons[source].invoke()
+            assert app.source_sound_vars[source].get() == str(path)
+            app.sound_preview_buttons[source].invoke()
+            assert sound_calls.call_args.args[0] == str(path)
+            assert app.sound_preview_job and app.sound_active
+        app.close_settings()
+        assert not app.sound_active and app.sound_preview_job is None
+        store.save(app._collect_config())
+        app.config = store.load()
+        app._load_config()
+        assert app.config["agoda_sound_file"] == str(agoda)
+        assert app.config["expedia_sound_file"] == str(expedia)
+        app.on_close()
+        root.update()
+        assert root.state() == "withdrawn"
+        for source in ("Agoda", "Expedia"):
+            app.enqueue_alert(BookingEvent(source=source, booking_id=f"{source}-12345", checkin_date=date.today(), guest_name="Test Guest", room_type="Deluxe x1"))
+        root.update()
+        assert app.active_alert.source == "Agoda"
+        assert app.active_popup.winfo_viewable() and root.state() == "withdrawn"
+        assert sound_calls.call_args.args[0] == str(agoda)
+        copy, close = popup_action_buttons(app.active_popup)
+        copy.invoke()
+        assert app.sound_active and root.clipboard_get().endswith("Agoda Deluxe x1")
+        app.stop_sound_preview()
+        assert app.sound_active  # Preview Stop cannot stop this real booking.
+        close.invoke()
+        root.update()
+        assert app.active_alert.source == "Expedia"
+        assert app.active_popup.winfo_viewable() and root.state() == "withdrawn"
+        assert sound_calls.call_args.args[0] == str(expedia)
+        popup_action_buttons(app.active_popup)[1].invoke()
+        assert not app.sound_active and app.active_popup is None
+        assert sound_calls.call_args.args == (None, 0)
+        assert app.sound_repeat_job is app.sound_preview_job is None
+    finally:
+        app.exit_app()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="The packaged desktop app targets Windows")
 def test_windows_ui_builds_with_excel_context_menu():
     if run_in_fresh_tk_process("test_windows_ui_builds_with_excel_context_menu"):
