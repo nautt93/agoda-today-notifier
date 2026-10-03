@@ -10,4 +10,6 @@ dist/
 *.pfx
 *.pem
 update-error.log
-
+output/
+tmp/pdfs/
+*.eml

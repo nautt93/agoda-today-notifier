@@ -35,7 +35,8 @@ def popup_action_buttons(popup):
             yield child
             yield from descendants(child)
 
-    buttons = [child for child in descendants(popup) if isinstance(child, ttk.Button)]
+    buttons = [child for child in descendants(popup) if isinstance(child, ttk.Button)
+               and child.winfo_name() in {"copy_booking", "close_notification"}]
     assert [button.cget("text") for button in buttons] == ["Sao chép", "Đóng thông báo"]
     assert all(button.winfo_viewable() and button.winfo_height() >= 96 for button in buttons)
     assert all(button.winfo_width() >= 240 for button in buttons)
@@ -57,6 +58,128 @@ def wait_for_tray(app):
     assert app.tray.icon.visible
     assert app.tray.icon._hwnd and app.tray.icon._icon_handle
     app._drain_events()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Native Windows Expedia A4 preview and notification integration")
+def test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge(tmp_path, monkeypatch):
+    if run_in_fresh_tk_process("test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge"):
+        return
+    from email import policy
+    from email.message import EmailMessage
+    from types import SimpleNamespace
+
+    import app as desktop
+    from booking_notifier.config import ConfigStore
+    from booking_notifier.expedia_print import parse_expedia_print, render_expedia_a4
+    from booking_notifier.state import StateStore
+
+    store = ConfigStore(tmp_path / "config.json")
+    store.save({"f92_enabled": False, "quiet_hours_enabled": False, "start_with_windows": False, "update_manifest_source": ""})
+    state = StateStore(tmp_path / "state.json")
+    monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
+    monkeypatch.setattr(desktop, "ConfigStore", lambda: store)
+    monkeypatch.setattr(desktop, "StateStore", lambda: state)
+    monkeypatch.setattr(desktop.BookingNotifierApp, "play_sound", lambda self: setattr(self, "sound_active", True))
+    message = EmailMessage(policy=policy.default)
+    message["From"] = "Expedia <notify@expedia.com>"
+    message["Subject"] = "Expedia - New Booking - Arriving on 10 Sep 2026"
+    message.set_content((Path(__file__).parent / "fixtures/expedia_print_test.html").read_text(encoding="utf-8"), subtype="html")
+    data = parse_expedia_print(message)
+    data.booking.checkin_date = date.today()
+    data.booking.checkout_date = date.today() + timedelta(days=7)
+    root = tk.Tk()
+    app = BookingNotifierApp(root)
+    try:
+        wait_for_tray(app)
+        state.register_today_confirmation(data.booking, ["test-print"], date.today())
+        app.refresh_history()
+        app.on_close()
+        root.update()
+        assert root.state() == "withdrawn"
+        app.enqueue_alert(data.booking)
+        root.update()
+        popup = app.active_popup
+        copy_button, close_button = popup_action_buttons(popup)
+        print_buttons = [child for frame in popup.winfo_children() for child in frame.winfo_children()
+                         if isinstance(child, ttk.Button) and child.winfo_name() == "print_expedia"]
+        assert len(print_buttons) == 1 and print_buttons[0].winfo_viewable()
+        request = Mock()
+        monkeypatch.setattr(app, "request_expedia_print", request)
+        print_buttons[0].invoke()
+        request.assert_called_once_with(data.booking)
+        assert app.active_alert is data.booking and app.sound_active
+        assert app.active_menu.index("end") == 1
+
+        app.restore_main_window()
+        root.update()
+        row = app.history_tree.get_children()[0]
+        monkeypatch.setattr(app.history_menu, "tk_popup", Mock())
+        monkeypatch.setattr(app.history_menu, "grab_release", Mock())
+        row_y = app.history_tree.bbox(row)[1] + 8
+        app.show_history_context_menu(SimpleNamespace(y=row_y, x_root=50, y_root=50))
+        assert app.history_menu.index("end") == 1
+        app.history_menu.invoke(1)
+        assert request.call_args.args[0].booking_id == data.booking.booking_id
+        assert request.call_args.args[0].source == "Expedia"
+        app.on_close()
+        root.update()
+        app.show_expedia_print_preview(data.booking, render_expedia_a4(data))
+        root.update()
+        assert app.print_preview.winfo_viewable() and root.state() == "withdrawn"
+        assert popup.winfo_viewable() and app.sound_active
+        assert app.active_alert is data.booking
+        assert state.pending_for_date(date.today())
+        assert app.print_preview.winfo_height() < app.print_preview.winfo_screenheight()
+        screenshot_dir = os.environ.get("BOOKING_UI_SCREENSHOT_DIR")
+        if screenshot_dir:
+            from PIL import ImageGrab
+
+            target = Path(screenshot_dir)
+            target.mkdir(parents=True, exist_ok=True)
+            for window, name in ((popup, "expedia-popup-print.png"), (app.print_preview, "expedia-a4-preview.png")):
+                window.lift()
+                root.update()
+                x, y = window.winfo_rootx(), window.winfo_rooty()
+                ImageGrab.grab(bbox=(x, y, x + window.winfo_width(), y + window.winfo_height())).save(target / name)
+
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+
+        preview_print = next(child for child in descendants(app.print_preview)
+                             if isinstance(child, ttk.Button) and child.cget("text") == "In 1 trang A4")
+        chooser = Mock(return_value=None)  # Native dialog Cancel does not acknowledge.
+        monkeypatch.setattr(desktop, "choose_printer", chooser)
+        preview_print.invoke()
+        deadline = time.monotonic() + 3
+        while (chooser.call_count == 0 or preview_print.cget("state") == "disabled") and time.monotonic() < deadline:
+            root.update()
+            time.sleep(0.01)
+        assert chooser.call_count == 1 and app.sound_active
+        app.close_expedia_print_preview()
+        root.update()
+        assert app.print_preview is None and app.print_preview_image is None and app.print_preview_photo is None
+        assert root.state() == "withdrawn" and app.active_alert is data.booking and app.sound_active
+        copy_button.invoke()
+        assert root.clipboard_get().split("\t")[8].startswith("Expedia Superior Double Room")
+        assert "4111" not in root.clipboard_get() and "CVV" not in root.clipboard_get()
+        close_button.invoke()
+        assert not app.sound_active
+        app.enqueue_alert(BookingEvent(source="Agoda", booking_id="AGODA-TEST", checkin_date=date.today(), guest_name="Agoda Test"))
+        root.update()
+        assert not any(isinstance(child, ttk.Button) and child.winfo_name() == "print_expedia"
+                       for child in descendants(app.active_popup))
+        assert app.active_menu.index("end") == 0
+        assert len(popup_action_buttons(app.active_popup)) == 2
+        # Switching right-click source removes Expedia's print entry.
+        app.history_rows[row] = BookingEvent(source="Agoda", booking_id="AGODA-TEST").to_dict()
+        app.show_history_context_menu(SimpleNamespace(y=row_y, x_root=50, y_root=50))
+        assert app.history_menu.index("end") == 0
+        serialized = (tmp_path / "state.json").read_text(encoding="utf-8")
+        assert "4111" not in serialized and "cvv" not in serialized and "card" not in serialized
+    finally:
+        app.exit_app()
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Real Windows source audio controls and tray popup queue")
