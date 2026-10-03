@@ -175,6 +175,7 @@ def test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge(tmp_p
         assert app.active_menu.index("end") == 0
         assert len(popup_action_buttons(app.active_popup)) == 2
         # Switching right-click source removes Expedia's print entry.
+        row = app.history_tree.get_children()[0]
         app.history_rows[row] = BookingEvent(source="Agoda", booking_id="AGODA-TEST").to_dict()
         app.show_history_context_menu(SimpleNamespace(y=row_y, x_root=50, y_root=50))
         assert app.history_menu.index("end") == 0

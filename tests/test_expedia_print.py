@@ -23,7 +23,7 @@ from booking_notifier.expedia_print import (
     render_expedia_a4,
 )
 from booking_notifier.models import BookingEvent
-from booking_notifier.windows_print import DEVMODE_PREFIX, PRINTDLGW, PrinterJob, _native, set_a4_mode
+from booking_notifier.windows_print import DEVMODE_PREFIX, PRINTDLGW, PrinterJob, _native, choose_printer, set_a4_mode
 
 
 def sample_message(html: str | None = None) -> EmailMessage:
@@ -183,7 +183,7 @@ def test_fetch_caps_at_three_matching_emails_and_never_accepts_wrong_id(monkeypa
 def test_print_load_freezes_clicked_booking_and_sanitizes_unexpected_errors(monkeypatch):
     desktop = BookingNotifierApp.__new__(BookingNotifierApp)
     desktop.config = {"email_address": "hotel@example.invalid", "password_encrypted": "protected"}
-    desktop.closing = desktop.print_loading = False
+    desktop.closing = desktop.print_loading = desktop.print_spooling = False
     desktop.events = queue.Queue()
     desktop.set_status = Mock()
     monkeypatch.setattr("app.unprotect_secret", lambda value: "test-secret")
@@ -204,6 +204,49 @@ def test_print_load_freezes_clicked_booking_and_sanitizes_unexpected_errors(monk
     assert "Private" not in error
     desktop.request_expedia_print(clicked)  # A repeated click while loading cannot duplicate the task.
     assert constructor.call_count == 1
+
+
+@pytest.mark.parametrize("cancel,wrong_paper", [(True, False), (False, False), (False, True)])
+def test_printer_dialog_cancel_and_a4_validation_release_native_resources(monkeypatch, cancel, wrong_paper):
+    mode = DEVMODE_PREFIX()
+    mode.dmSize = ct.sizeof(DEVMODE_PREFIX)
+    gdi, kernel, dialog = Mock(), Mock(), Mock()
+    kernel.GlobalSize.return_value = ct.sizeof(DEVMODE_PREFIX)
+    kernel.GlobalLock.return_value = ct.addressof(mode)
+    dialog.CommDlgExtendedError.return_value = 0
+
+    def open_dialog(pointer):
+        selection = pointer._obj
+        selection.hDevMode, selection.hDevNames = 200, 300
+        if selection.Flags == 0x400:
+            return 1
+        assert selection.nMinPage == selection.nMaxPage == selection.nCopies == 1
+        assert selection.Flags & 0x4 and selection.Flags & 0x8
+        assert mode.dmPaperSize == 9
+        if cancel:
+            return 0
+        selection.hDC = 400
+        return 1
+
+    dialog.PrintDlgW.side_effect = open_dialog
+    gdi.ResetDCW.return_value = 400
+    gdi.GetDeviceCaps.side_effect = lambda hdc, cap: {88: 300, 90: 300, 110: 2550 if wrong_paper else 2480, 111: 3508}[cap]
+    monkeypatch.setattr("booking_notifier.windows_print._native", lambda: (gdi, kernel, dialog))
+    if wrong_paper:
+        with pytest.raises(ExpediaPrintError, match="khổ A4"):
+            choose_printer(99)
+        gdi.DeleteDC.assert_called_once_with(400)
+    else:
+        job = choose_printer(99)
+        if cancel:
+            assert job is None
+            gdi.DeleteDC.assert_not_called()
+        else:
+            assert job and job.hdc == 400
+            job.close()
+            gdi.DeleteDC.assert_called_once_with(400)
+    assert kernel.GlobalFree.call_count == 2
+    assert {call.args[0] for call in kernel.GlobalFree.call_args_list} == {200, 300}
 
 
 def test_a4_settings_preserve_driver_flags_and_clear_custom_paper():

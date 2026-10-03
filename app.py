@@ -145,6 +145,7 @@ class BookingNotifierApp:
         self.closing = False
         self.update_busy = False
         self.print_loading = False
+        self.print_spooling = False
         self.print_preview: tk.Toplevel | None = None
         self.print_preview_image: Any = None
         self.print_preview_photo: Any = None
@@ -831,9 +832,11 @@ class BookingNotifierApp:
                     else:
                         self.show_expedia_print_preview(alert, image)
                 elif event_type == "expedia_print_done":
+                    self.print_spooling = False
                     preview, button, feedback, error = payload
                     if preview.winfo_exists():
                         button.configure(state="normal")
+                        button.master.nametowidget("close_preview").configure(state="normal")
                         feedback.set(error or "Đã gửi đúng 1 trang A4 đến máy in. Hãy kiểm tra bản in.")
                 elif event_type == "connection_test":
                     ok, text = payload
@@ -1297,7 +1300,7 @@ class BookingNotifierApp:
         return "break"
 
     def request_expedia_print(self, alert: BookingEvent) -> None:
-        if alert.source != "Expedia" or self.closing or self.print_loading:
+        if alert.source != "Expedia" or self.closing or self.print_loading or self.print_spooling:
             return
         try:
             password = unprotect_secret(str(self.config.get("password_encrypted", "")))
@@ -1330,6 +1333,8 @@ class BookingNotifierApp:
         threading.Thread(target=worker, name="ExpediaPrintLoad", daemon=True).start()
 
     def close_expedia_print_preview(self) -> None:
+        if self.print_spooling and not self.closing:
+            return  # Keep the native print dialog's owner valid until cancel/completion.
         if self.print_preview is not None:
             self.print_preview.destroy()
             self.print_preview = None
@@ -1343,6 +1348,10 @@ class BookingNotifierApp:
     def show_expedia_print_preview(self, alert: BookingEvent, image: Any) -> None:
         from PIL import Image, ImageTk
 
+        if self.print_spooling:
+            image.close()
+            self.set_status("Đang in phiếu Expedia trước đó; hãy thử lại sau khi in/hủy in xong")
+            return
         self.close_expedia_print_preview()
         preview = tk.Toplevel(self.root)
         self.print_preview, self.print_preview_image = preview, image
@@ -1365,11 +1374,13 @@ class BookingNotifierApp:
         feedback = tk.StringVar(master=preview, value="Kiểm tra tên khách, tất cả phòng, khoản thu và thẻ trước khi in.")
         tk.Label(preview, textvariable=feedback, font=("Segoe UI", 9), wraplength=640, justify="center",
                  bg=self.COLORS["bg"], fg=self.COLORS["muted"]).pack(padx=14, pady=8)
-        actions = tk.Frame(preview, bg=self.COLORS["bg"])
+        actions = tk.Frame(preview, name="print_actions", bg=self.COLORS["bg"])
         actions.pack(fill="x", padx=20, pady=(0, 16))
         actions.columnconfigure((0, 1), weight=1, uniform="print_actions")
 
         def send_to_printer() -> None:
+            if self.print_spooling:
+                return
             try:
                 owner = preview.winfo_id()
                 if os.name == "nt":
@@ -1385,6 +1396,8 @@ class BookingNotifierApp:
                 feedback.set("Không kết nối được máy in. Hãy kiểm tra máy in Windows.")
                 return
             print_button.configure(state="disabled")
+            actions.nametowidget("close_preview").configure(state="disabled")
+            self.print_spooling = True
             feedback.set("Chọn máy in Windows để in đúng 1 trang A4…")
             page = image.copy()
 
@@ -1413,7 +1426,7 @@ class BookingNotifierApp:
 
         print_button = ttk.Button(actions, text="In 1 trang A4", command=send_to_printer, style="Primary.TButton")
         print_button.grid(row=0, column=0, sticky="nsew", ipady=10, padx=(0, 5))
-        ttk.Button(actions, text="Đóng bản xem trước", command=self.close_expedia_print_preview,
+        ttk.Button(actions, name="close_preview", text="Đóng bản xem trước", command=self.close_expedia_print_preview,
                    style="Secondary.TButton").grid(row=0, column=1, sticky="nsew", ipady=10, padx=(5, 0))
         preview.update_idletasks()
         preview.lift()
