@@ -151,14 +151,27 @@ def test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge(tmp_p
 
         preview_print = next(child for child in descendants(app.print_preview)
                              if isinstance(child, ttk.Button) and child.cget("text") == "In 1 trang A4")
-        chooser = Mock(return_value=None)  # Native dialog Cancel does not acknowledge.
+        native_ready, allow_cancel = threading.Event(), threading.Event()
+
+        def cancel_after_other_ui_actions(_owner):
+            native_ready.set()
+            assert allow_cancel.wait(3)
+            return None
+
+        chooser = Mock(side_effect=cancel_after_other_ui_actions)
         monkeypatch.setattr(desktop, "choose_printer", chooser)
         preview_print.invoke()
+        assert native_ready.wait(1) and app.print_spooling
+        copy_button.invoke()  # The booking UI stays responsive while the native dialog waits.
+        assert app.sound_active and root.clipboard_get().split("\t")[1] == "MINH TRẦN"
+        app.close_expedia_print_preview()
+        assert app.print_preview is not None  # Keep native dialog owner alive until cancellation.
+        allow_cancel.set()
         deadline = time.monotonic() + 3
-        while (chooser.call_count == 0 or preview_print.cget("state") == "disabled") and time.monotonic() < deadline:
+        while app.print_spooling and time.monotonic() < deadline:
             root.update()
             time.sleep(0.01)
-        assert chooser.call_count == 1 and app.sound_active
+        assert chooser.call_count == 1 and app.sound_active and not app.print_spooling
         app.close_expedia_print_preview()
         root.update()
         assert app.print_preview is None and app.print_preview_image is None and app.print_preview_photo is None
