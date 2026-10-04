@@ -120,6 +120,64 @@ def test_legacy_no_booking_id_restores_popup_and_excel_and_keeps_next_arrival(tm
         app.exit_app()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows Expedia delayed-event notification deduplication")
+def test_expedia_late_duplicate_event_does_not_reopen_popup_or_replay_sound(tmp_path, monkeypatch):
+    if run_in_fresh_tk_process("test_expedia_late_duplicate_event_does_not_reopen_popup_or_replay_sound"):
+        return
+    import app as desktop
+    from booking_notifier.config import ConfigStore
+    from booking_notifier.state import StateStore
+
+    store = ConfigStore(tmp_path / "config.json")
+    store.save({"f92_enabled": False, "quiet_hours_enabled": False, "start_with_windows": False, "update_manifest_source": ""})
+    state = StateStore(tmp_path / "state.json")
+    monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
+    monkeypatch.setattr(desktop, "ConfigStore", lambda: store)
+    monkeypatch.setattr(desktop, "StateStore", lambda: state)
+    root = tk.Tk()
+    app = BookingNotifierApp(root)
+    app.play_sound = Mock(side_effect=lambda: setattr(app, "sound_active", True))
+    app.f92_worker.notify = Mock()
+    try:
+        wait_for_tray(app)
+        app.on_close()
+        root.update()
+        event = BookingEvent(source="Expedia", booking_id="1234567890", checkin_date=date.today(),
+                             guest_name="Test Guest", room_type="Deluxe x1")
+        late_alert = state.register_today_confirmation(event, ("test-email",), date.today())
+        # Force the minute tick between the worker's state commit and queue emission.
+        app._minute_tick()
+        root.update()
+        popup = app.active_popup
+        assert popup.winfo_viewable() and root.state() == "withdrawn"
+        copy, close = popup_action_buttons(popup)
+        copy.invoke()
+        assert not state.is_acknowledged(event) and app.sound_active
+        close.invoke()
+        assert app.active_popup is None and state.is_acknowledged(event)
+        app.state = StateStore(state.path)
+        for _ in range(2):
+            app.events.put(("alert", late_alert))
+        app._drain_events()
+        app._minute_tick()
+        root.update()
+        assert app.active_popup is None and not app.alert_queue and not app.sound_active
+        assert len(app.state.history()) == 1 and len(app.history_tree.get_children()) == 1
+        app.play_sound.assert_called_once()
+        app.f92_worker.notify.assert_called_once()
+        # Another reservation for the same named guest must still be shown normally.
+        other = BookingEvent(source="Expedia", booking_id="1234567891", checkin_date=date.today(), guest_name="Test Guest")
+        app.events.put(("alert", app.state.register_today_confirmation(other, ("test-other",), date.today())))
+        app._drain_events()
+        root.update()
+        assert app.active_popup.winfo_viewable() and app.active_alert.booking_id == other.booking_id
+        assert app.play_sound.call_count == 2
+        popup_action_buttons(app.active_popup)[1].invoke()
+        assert len(app.state.history()) == 2 and not app.state.pending_for_date(date.today())
+    finally:
+        app.exit_app()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Native Windows Expedia A4 preview and notification integration")
 def test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge(tmp_path, monkeypatch):
     if run_in_fresh_tk_process("test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge"):

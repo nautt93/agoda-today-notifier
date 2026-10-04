@@ -937,6 +937,10 @@ class BookingNotifierApp:
     def enqueue_alert(self, alert: BookingEvent) -> None:
         if alert.checkin_date != date.today() or alert.status not in {"new", "active"}:
             return
+        # The minute tick/startup can show a persisted popup before the IMAP
+        # worker emits its alert. Closing that popup must also block the late event.
+        if self.state.is_acknowledged(alert):
+            return
         if self.quiet_var.get() and is_quiet_hours():
             return  # Already persisted pending; the minute tick releases it after 08:00.
         if alert.storage_id in self.queued_ids:
@@ -1000,11 +1004,19 @@ class BookingNotifierApp:
         popup.after(250, reinforce_focus)
 
     def _show_next_alert(self) -> None:
-        if self.active_alert or not self.alert_queue:
-            if not self.active_alert and not self.alert_queue:
-                self.f92_worker.idle()
+        if self.active_alert:
             return
-        alert = self.alert_queue.pop(0)
+        while self.alert_queue:
+            alert = self.alert_queue.pop(0)
+            # A notification may have been acknowledged after it entered this
+            # queue. Recheck immediately before creating its window/sound/F92.
+            if alert.checkin_date != date.today() or self.state.is_acknowledged(alert):
+                self.queued_ids.discard(alert.storage_id)
+                continue
+            break
+        else:
+            self.f92_worker.idle()
+            return
         self.active_alert = alert
         popup = tk.Toplevel(self.root)
         self.active_popup = popup

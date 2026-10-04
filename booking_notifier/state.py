@@ -302,37 +302,58 @@ class StateStore:
 
     def pending_for_date(self, today: date) -> list[BookingEvent]:
         result: list[BookingEvent] = []
+        seen: set[str] = set()
         with self.lock:
             for record in self.data["pending_alerts"]:
                 if record.get("checkin_date") != today.isoformat():
                     continue
                 storage_id = self._record_storage_id(record)
                 current = self.data["bookings"].get(storage_id, {})
-                if current.get("status") == BOOKING_STATUS_CANCELLED:
+                if (storage_id in seen or current.get("status") == BOOKING_STATUS_CANCELLED
+                        or self._is_acknowledged_locked(storage_id, today.isoformat())):
                     continue
                 try:
                     result.append(BookingEvent.from_dict(record))
+                    seen.add(storage_id)
                 except (TypeError, ValueError):
                     continue
         return result
+
+    def is_acknowledged(self, event: BookingEvent) -> bool:
+        """Recheck persisted acknowledgement when a delayed UI event arrives."""
+        checkin = event.checkin_date.isoformat() if event.checkin_date else ""
+        with self.lock:
+            return self._is_acknowledged_locked(event.storage_id, checkin)
+
+    def _is_acknowledged_locked(self, storage_id: str, checkin: str) -> bool:
+        if not checkin:
+            return False
+        booking = self.data["bookings"].get(storage_id, {})
+        if booking.get("alerted_for") == checkin:
+            return True
+        # Legacy profiles may retain history without the matching booking cache.
+        return any(record.get("checkin_date") == checkin and self._record_storage_id(record) == storage_id
+                   for record in self.data["history"])
 
     def acknowledge(self, event: BookingEvent) -> None:
         with self.lock:
             today_text = event.checkin_date.isoformat() if event.checkin_date else ""
             storage_id = event.storage_id
+            already_acknowledged = self._is_acknowledged_locked(storage_id, today_text)
             self.data["pending_alerts"] = [
                 record for record in self.data["pending_alerts"]
                 if self._record_storage_id(record) != storage_id
             ]
             booking = self.data["bookings"].get(storage_id)
-            if booking is not None:
+            if booking is not None and booking.get("alerted_for") != today_text:
                 booking["alerted_for"] = today_text
                 booking["alerted_at"] = _now()
-            history_record = event.to_dict()
-            history_record["acknowledged_at"] = _now()
-            history_record["pending_key"] = f"{storage_id}:{today_text}"
-            self.data["history"].append(history_record)
-            self.data["history"] = self.data["history"][-2000:]
+            if not already_acknowledged:
+                history_record = event.to_dict()
+                history_record["acknowledged_at"] = _now()
+                history_record["pending_key"] = f"{storage_id}:{today_text}"
+                self.data["history"].append(history_record)
+                self.data["history"] = self.data["history"][-2000:]
             if booking is not None:
                 # A popup may predate a parser repair. Do not write its stale
                 # short name/empty room back over the enriched saved details.

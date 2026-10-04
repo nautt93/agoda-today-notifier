@@ -140,6 +140,56 @@ def test_acknowledged_booking_alerts_only_once(tmp_path):
     assert len(state.history()) == 1
 
 
+@pytest.mark.parametrize("source", ["Agoda", "Expedia"])
+def test_acknowledgement_is_idempotent_after_restart(tmp_path, source):
+    event = BookingEvent(source=source, booking_id="1234567890", checkin_date=date.today())
+    state = StateStore(tmp_path / "state.json")
+    alert = state.register_today_confirmation(event, ("first",), date.today())
+    assert not state.is_acknowledged(event)
+    state.acknowledge(alert)
+    original = state.history()
+    reloaded = StateStore(state.path)
+    assert reloaded.is_acknowledged(event)
+    # A stale callback/double close must not append another Excel/history row.
+    reloaded.acknowledge(alert)
+    assert reloaded.history() == original
+    assert reloaded.register_today_confirmation(event, ("resend",), date.today()) is None
+    assert not reloaded.pending_for_date(date.today())
+
+
+def test_legacy_history_blocks_stale_pending_and_duplicate_acknowledgement(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    event = BookingEvent(source="Expedia", booking_id="1234567890", checkin_date=date.today())
+    record = event.to_dict()
+    state.data["history"].append(record)
+    state.data["pending_alerts"].extend([record.copy(), record.copy()])
+    assert state.is_acknowledged(event)  # No booking cache in this legacy profile.
+    assert state.pending_for_date(date.today()) == []
+    state.acknowledge(event)
+    assert state.history() == [record] and state.data["pending_alerts"] == []
+
+
+def test_duplicate_pending_records_restore_only_one_notification(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    event = BookingEvent(source="Expedia", booking_id="1234567890", checkin_date=date.today())
+    state.data["pending_alerts"].extend([event.to_dict(), event.to_dict()])
+    assert state.pending_for_date(date.today()) == [event]
+    state.acknowledge(event)
+    assert len(state.history()) == 1 and not state.pending_for_date(date.today())
+
+
+def test_acknowledgement_is_per_provider_booking_and_arrival_date(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    today = date.today()
+    event = BookingEvent(source="Expedia", booking_id="1234567890", checkin_date=today)
+    state.acknowledge(state.register_today_confirmation(event, (), today))
+    other_provider = BookingEvent(source="Agoda", booking_id=event.booking_id, checkin_date=today)
+    other_booking = BookingEvent(source="Expedia", booking_id="1234567891", checkin_date=today)
+    other_arrival = BookingEvent(source="Expedia", booking_id=event.booking_id, checkin_date=today + timedelta(days=1))
+    assert all(not state.is_acknowledged(item) for item in (other_provider, other_booking, other_arrival))
+    assert state.register_today_confirmation(other_arrival, (), other_arrival.checkin_date) is not None
+
+
 def test_parser_upgrade_repairs_history_without_alerting_again(tmp_path):
     state = StateStore(tmp_path / "state.json")
     incomplete = BookingEvent(

@@ -211,6 +211,41 @@ def make_monitor(tmp_path, **config):
     return monitor, state, events
 
 
+@pytest.mark.parametrize("has_message_id", [True, False])
+def test_expedia_resends_with_different_uids_do_not_notify_twice_after_restart(tmp_path, monkeypatch, has_message_id):
+    def email_copy(copy_number, booking_id="1234567890"):
+        message = message_from_bytes(recent_message(source="Expedia", booking_id=booking_id), policy=policy.default)
+        if has_message_id:
+            message.replace_header("Message-ID", f"<resend-{copy_number}@example.invalid>")
+        else:
+            del message["Message-ID"]
+        message["Date"] = f"Sun, 04 Oct 2026 09:{copy_number:02d}:00 +0700"
+        return message.as_bytes()
+
+    inbox = {1: email_copy(1), 2: email_copy(2)}
+    fake_inbox(monkeypatch, inbox)
+    monitor, state, events = make_monitor(tmp_path)
+    assert monitor.scan_mailbox() == 2
+    alerts = [payload for kind, payload in events.queue if kind == "alert"]
+    assert len(alerts) == 1 and len(state.pending_for_date(date.today())) == 1
+    state.acknowledge(alerts[0])
+    saved_history = state.history()
+    # A fresh IMAP UID and Message-ID (or changed raw content) still has the same booking ID.
+    inbox[3] = email_copy(3)
+    resumed = mail_monitor.ImapMonitor(monitor.config, "secret", StateStore(state.path), events)
+    assert resumed.scan_mailbox() == 1
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 1
+    assert resumed.state.history() == saved_history and not resumed.state.pending_for_date(date.today())
+    # A rebuilt mailbox can give all copies new UIDs; the persisted booking guard survives.
+    fake_inbox(monkeypatch, inbox, uid_validity=[b"456"])
+    assert resumed.scan_mailbox() == 0  # Previously processed Message-IDs/raw copies retain their aliases.
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 1
+    # Never suppress a different reservation just because the guest name is identical.
+    inbox[4] = email_copy(4, booking_id="1234567891")
+    assert resumed.scan_mailbox() == 1
+    assert [payload.booking_id for kind, payload in events.queue if kind == "alert"] == ["1234567890", "1234567891"]
+
+
 def test_ten_unfinished_emails_resume_despite_legacy_history_without_booking_id(tmp_path, monkeypatch):
     monitor, state, events = make_monitor(tmp_path)
     today = date.today()
