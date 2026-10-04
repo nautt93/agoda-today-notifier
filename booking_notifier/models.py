@@ -10,10 +10,25 @@ BOOKING_STATUS_MODIFIED = "modified"
 BOOKING_STATUS_CANCELLED = "cancelled"
 
 
+def booking_storage_id(record: dict[str, Any]) -> str:
+    """Read identity without deserializing dates or requiring optional legacy fields.
+
+    Preserve the existing hash for ID-less Agoda confirmations. An unrelated old
+    history row must never prevent a new email from being committed.
+    """
+    source = str(record.get("source") or "Agoda").lower()
+    booking_id = str(record.get("booking_id") or "").upper()
+    if booking_id:
+        return f"{source}:{booking_id}"
+    raw = "|".join(str(record.get(field) or "")
+                   for field in ("subject", "received_at", "checkin_date", "sender"))
+    return f"{source}:alert:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
+
+
 @dataclass(slots=True)
 class BookingEvent:
     source: str
-    booking_id: str
+    booking_id: str = ""
     status: str = BOOKING_STATUS_NEW
     checkin_date: date | None = None
     checkout_date: date | None = None
@@ -32,12 +47,12 @@ class BookingEvent:
 
     @property
     def storage_id(self) -> str:
-        if self.booking_id:
-            return f"{self.source.lower()}:{self.booking_id.upper()}"
         # 1.5.5 also alerts on Agoda confirmations whose booking ID is not readable.
-        raw = "|".join((self.subject, self.received_at,
-                        self.checkin_date.isoformat() if self.checkin_date else "", self.sender))
-        return f"{self.source.lower()}:alert:{hashlib.sha256(raw.encode('utf-8')).hexdigest()}"
+        return booking_storage_id({
+            "source": self.source, "booking_id": self.booking_id, "subject": self.subject,
+            "received_at": self.received_at, "sender": self.sender,
+            "checkin_date": self.checkin_date.isoformat() if self.checkin_date else "",
+        })
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
@@ -48,6 +63,10 @@ class BookingEvent:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> BookingEvent:
         data = dict(value)
+        # 1.5.x records may omit the source/ID; JSON exports may have numeric IDs.
+        source = str(data.get("source") or "Agoda")
+        data["source"] = {"agoda": "Agoda", "expedia": "Expedia"}.get(source.lower(), source)
+        data["booking_id"] = str(data.get("booking_id") or "")
         for field in ("checkin_date", "checkout_date"):
             raw = data.get(field)
             data[field] = date.fromisoformat(raw) if raw else None

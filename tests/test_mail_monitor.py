@@ -211,6 +211,70 @@ def make_monitor(tmp_path, **config):
     return monitor, state, events
 
 
+def test_ten_unfinished_emails_resume_despite_legacy_history_without_booking_id(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path)
+    today = date.today()
+    legacy = {"guest_name": "Legacy Test Guest", "checkin_date": "30/09/2026", "custom": "preserve"}
+    state.data["history"].append(legacy)
+    mailbox_key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(mailbox_key, list(range(101, 111)), parser_version=mail_monitor.PARSER_STATE_VERSION)
+    # The screenshot has zero new emails, with ten unfinished UIDs still pending.
+    messages = {uid: recent_message("Agoda" if uid % 2 else "Expedia", booking_id=str(1000000 + uid))
+                for uid in range(101, 111)}
+    searches = []
+    fetched = fake_inbox(monkeypatch, messages, searches=searches)
+    assert monitor.scan_mailbox() == 10
+    assert fetched == list(range(110, 100, -1))
+    assert searches == [("UID", "111:*")]
+    assert state.mailbox_read_position(mailbox_key) == (110, [])
+    alerts = [payload for kind, payload in events.queue if kind == "alert"]
+    assert len(alerts) == 10 and all(alert.checkin_date == today for alert in alerts)
+    assert {alert.source for alert in alerts} == {"Agoda", "Expedia"}
+    assert state.history() == [legacy]
+    assert len(state.pending_for_date(today)) == 10
+    for alert in alerts:
+        state.acknowledge(alert)
+    reloaded = StateStore(state.path)
+    assert len(reloaded.history()) == 11 and reloaded.history()[-1] == legacy
+    assert reloaded.pending_for_date(today) == []
+    fetched.clear()
+    assert monitor.scan_mailbox() == 0 and fetched == []
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 10
+
+
+def test_agoda_confirmation_without_id_does_not_block_next_booking(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path)
+    raw = recent_message(booking_id="", subject="Agoda new booking confirmation")
+    messages = {2: raw, 1: recent_message("Expedia", booking_id="1234567890")}
+    fetched = fake_inbox(monkeypatch, messages)
+    assert monitor.scan_mailbox() == 2 and fetched == [2, 1]
+    alerts = [payload for kind, payload in events.queue if kind == "alert"]
+    assert [(alert.source, alert.booking_id) for alert in alerts] == [("Agoda", ""), ("Expedia", "1234567890")]
+    assert len(state.pending_for_date(date.today())) == 2
+    for alert in alerts:
+        state.acknowledge(alert)
+    reloaded = StateStore(state.path)
+    assert len(reloaded.history()) == 2 and reloaded.pending_for_date(date.today()) == []
+    assert monitor.scan_mailbox() == 0
+    assert len([kind for kind, _ in events.queue if kind == "alert"]) == 2
+
+
+def test_legacy_no_id_row_does_not_turn_other_days_or_lifecycle_into_alerts(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path)
+    legacy = {"guest_name": "Legacy Test Guest", "checkin_date": date.today().isoformat()}
+    state.data["history"].append(legacy)
+    fake_inbox(monkeypatch, {
+        4: recent_message(booking_id="", arrival=(date.today() + timedelta(days=1)).isoformat()),
+        3: recent_message(booking_id="1000003", subject="Booking cancelled"),
+        2: recent_message("Expedia", booking_id="1000002", subject="Reservation modified"),
+        1: recent_message("Expedia", booking_id="1000001"),
+    })
+    assert monitor.scan_mailbox() == 4
+    alerts = [payload for kind, payload in events.queue if kind == "alert"]
+    assert [alert.booking_id for alert in alerts] == ["1000001"]
+    assert len(state.pending_for_date(date.today())) == 1 and state.history() == [legacy]
+
+
 @pytest.mark.parametrize("source", ["Agoda", "Expedia"])
 def test_recover_four_cached_rows_outside_recent_twenty_without_realert(tmp_path, monkeypatch, source):
     monitor, state, events = make_monitor(tmp_path)

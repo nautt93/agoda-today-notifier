@@ -12,6 +12,55 @@ from booking_notifier.models import (
 from booking_notifier.state import StateStore
 
 
+def test_old_history_missing_booking_id_does_not_block_new_arrival(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    legacy = {"guest_name": "Old Test Guest", "checkin_date": "30/09/2026", "custom_legacy_field": "keep"}
+    state.data["history"].append(legacy)
+    event = BookingEvent(source="Agoda", booking_id="TEST-NEW", checkin_date=date.today())
+    alert = state.register_today_confirmation(event, ("uid:new", "msg:new"), date.today())
+    assert alert and alert.booking_id == "TEST-NEW"
+    reloaded = StateStore(state.path)
+    assert reloaded.history() == [legacy]
+    assert reloaded.is_processed("uid:new") and reloaded.is_processed("msg:new")
+    assert [item.booking_id for item in reloaded.pending_for_date(date.today())] == ["TEST-NEW"]
+    reloaded.acknowledge(alert)
+    assert len(reloaded.history()) == 2 and reloaded.history()[1] == legacy
+    assert reloaded.register_today_confirmation(event, ("uid:duplicate",), date.today()) is None
+
+
+def test_agoda_without_readable_id_queues_survives_restart_and_acknowledges_once(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    event = BookingEvent(source="Agoda", checkin_date=date.today(), guest_name="Test Guest",
+                         room_type="Deluxe x1", subject="Agoda booking confirmation", received_at="test-received")
+    alert = state.register_today_confirmation(event, ("uid:no-id", "msg:no-id"), date.today())
+    assert alert and alert.booking_id == "" and alert.storage_id == event.storage_id
+    reloaded = StateStore(state.path)
+    assert len(reloaded.pending_for_date(date.today())) == 1
+    assert reloaded.data["bookings"][event.storage_id]["booking_id"] == ""
+    assert reloaded.register_today_confirmation(event, ("uid:alias",), date.today()) is None
+    reloaded.acknowledge(alert)
+    assert reloaded.register_today_confirmation(event, ("uid:another",), date.today()) is None
+    assert reloaded.pending_for_date(date.today()) == [] and len(reloaded.history()) == 1
+
+
+def test_legacy_pending_missing_source_id_restores_without_losing_cursor(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    record = {"checkin_date": date.today().isoformat(), "guest_name": "Test Legacy Guest", "subject": "Agoda confirmation"}
+    identity = StateStore._record_storage_id(record)
+    state.data["bookings"][identity] = {**record, "status": "active"}
+    state.data["pending_alerts"].append(record)
+    state.stage_mailbox_reads("incremental:test:123", [8, 9, 10], minimum_cursor=10, parser_version="p10")
+    state.finish_mailbox_read("incremental:test:123", 10)
+    reloaded = StateStore(state.path)
+    pending = reloaded.pending_for_date(date.today())
+    assert len(pending) == 1 and pending[0].source == "Agoda" and pending[0].booking_id == ""
+    assert pending[0].storage_id == identity
+    assert reloaded.mailbox_read_position("incremental:test:123") == (10, [8, 9])
+    reloaded.acknowledge(pending[0])
+    assert not reloaded.pending_for_date(date.today())
+    assert reloaded.data["bookings"][identity]["alerted_for"] == date.today().isoformat()
+
+
 def booking(checkin: date, status: str = "new") -> BookingEvent:
     return BookingEvent(
         source="Expedia",

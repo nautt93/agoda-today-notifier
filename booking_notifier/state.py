@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import STATE_PATH, atomic_json_write
-from .models import BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent
+from .models import BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent, booking_storage_id
 
 STATE_SCHEMA = 5
 PARSER_STATE_VERSION = "p10"
@@ -146,6 +146,10 @@ class StateStore:
                 for field, value in incoming.items():
                     if value not in (None, ""):
                         existing[field] = value
+                # An unreadable Agoda ID is valid. Persist its explicit empty ID
+                # instead of relying on a previously omitted dictionary field.
+                existing["source"] = event.source
+                existing["booking_id"] = event.booking_id
                 existing["status"] = "active"
                 existing["updated_at"] = _now()
                 new_checkin = str(existing.get("checkin_date", ""))
@@ -345,11 +349,7 @@ class StateStore:
 
     @staticmethod
     def _record_storage_id(record: dict[str, Any]) -> str:
-        source = str(record.get("source", "Agoda")).lower()
-        booking_id = str(record.get("booking_id", "")).upper()
-        if booking_id:
-            return f"{source}:{booking_id}"
-        return BookingEvent.from_dict({"source": "Agoda", **record}).storage_id
+        return booking_storage_id(record)
 
     @staticmethod
     def _record_checkin_date(record: dict[str, Any]) -> date | None:

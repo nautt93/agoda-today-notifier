@@ -60,6 +60,66 @@ def wait_for_tray(app):
     app._drain_events()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows startup with legacy missing-ID pending booking")
+def test_legacy_no_booking_id_restores_popup_and_excel_and_keeps_next_arrival(tmp_path, monkeypatch):
+    if run_in_fresh_tk_process("test_legacy_no_booking_id_restores_popup_and_excel_and_keeps_next_arrival"):
+        return
+    import app as desktop
+    from booking_notifier.config import ConfigStore
+    from booking_notifier.excel_export import excel_tsv
+    from booking_notifier.state import StateStore
+
+    store = ConfigStore(tmp_path / "config.json")
+    store.save({"f92_enabled": False, "quiet_hours_enabled": False, "start_with_windows": False, "update_manifest_source": ""})
+    state = StateStore(tmp_path / "state.json")
+    record = {"checkin_date": date.today().isoformat(), "checkout_date": (date.today() + timedelta(days=1)).isoformat(),
+              "guest_name": "Test Legacy Guest", "room_type": "Deluxe x1", "total_revenue": "VND 200,000",
+              "subject": "Agoda test booking confirmation", "received_at": "test-arrival"}
+    identity = StateStore._record_storage_id(record)
+    state.data["bookings"][identity] = {**record, "status": "active"}
+    state.data["pending_alerts"].append(record)  # Legacy record has neither source nor booking_id.
+    state.data["history"].append({"guest_name": "Test Old Guest", "checkin_date": "30/09/2026"})
+    state.stage_mailbox_reads("incremental:test:123", list(range(1, 11)), parser_version="p10")
+    reloaded = StateStore(state.path)
+    monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
+    monkeypatch.setattr(desktop, "ConfigStore", lambda: store)
+    monkeypatch.setattr(desktop, "StateStore", lambda: reloaded)
+    monkeypatch.setattr(desktop.BookingNotifierApp, "play_sound", lambda self: setattr(self, "sound_active", True))
+    root = tk.Tk()
+    app = BookingNotifierApp(root)
+    try:
+        root.update()
+        assert app.active_alert.source == "Agoda" and app.active_alert.booking_id == ""
+        assert app.active_alert.guest_name == "Test Legacy Guest"
+        assert app.active_popup.winfo_viewable() and app.sound_active
+        wait_for_tray(app)
+        app.on_close()
+        root.update()
+        assert root.state() == "withdrawn" and app.active_popup.winfo_viewable()
+        next_booking = BookingEvent(source="Expedia", booking_id="1234567890", checkin_date=date.today(),
+                                    guest_name="Test New Guest", room_type="Superior x1")
+        alert = reloaded.register_today_confirmation(next_booking, ("test-new",), date.today())
+        app.events.put(("alert", alert))
+        app._drain_events()
+        copy, close = popup_action_buttons(app.active_popup)
+        copy.invoke()
+        assert root.clipboard_get() == excel_tsv(BookingEvent.from_dict(record))
+        assert len(root.clipboard_get().split("\t")) == 9
+        assert root.clipboard_get().endswith("Agoda Deluxe x1") and app.sound_active
+        close.invoke()
+        root.update()
+        assert app.active_alert.booking_id == "1234567890" and app.active_popup.winfo_viewable()
+        assert root.state() == "withdrawn" and app.sound_active
+        popup_action_buttons(app.active_popup)[1].invoke()
+        assert app.active_popup is None and not app.sound_active
+        assert not reloaded.pending_for_date(date.today())
+        assert len(reloaded.history()) == 3
+        assert reloaded.mailbox_read_position("incremental:test:123") == (10, list(range(1, 11)))
+        assert reloaded.register_today_confirmation(BookingEvent.from_dict(record), ("alias",), date.today()) is None
+    finally:
+        app.exit_app()
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Native Windows Expedia A4 preview and notification integration")
 def test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge(tmp_path, monkeypatch):
     if run_in_fresh_tk_process("test_expedia_print_preview_buttons_context_and_tray_do_not_acknowledge"):

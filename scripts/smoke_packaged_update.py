@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import wave
+from datetime import date, timedelta
 from pathlib import Path
 
 
@@ -37,8 +38,21 @@ def main() -> None:
         config_dir = appdata / "AgodaTodayNotifier"
         config_dir.mkdir(parents=True)
         (config_dir / "config.json").write_text(json.dumps({
-            "f92_enabled": False, "start_with_windows": False,
+            "f92_enabled": False, "start_with_windows": False, "quiet_hours_enabled": False,
             "email_address": "", "update_manifest_source": "",
+        }), encoding="utf-8")
+        # Exercise an existing 1.5.x-style profile through the real frozen upgrade.
+        legacy_pending = {
+            "checkin_date": date.today().isoformat(),
+            "checkout_date": (date.today() + timedelta(days=1)).isoformat(),
+            "guest_name": "Test Legacy Guest", "room_type": "Deluxe x1",
+            "subject": "Agoda test booking confirmation",
+        }  # Intentionally no source or booking_id.
+        legacy_history = {"guest_name": "Test Old Guest", "checkin_date": "30/09/2026", "custom": "preserve"}
+        mailbox_record = {"cursor": 110, "pending_uids": list(range(101, 111)), "parser_version": "p10"}
+        (config_dir / "state.json").write_text(json.dumps({
+            "schema": 5, "pending_alerts": [legacy_pending], "history": [legacy_history],
+            "mailbox_reads": {"incremental:test:123": mailbox_record},
         }), encoding="utf-8")
         process = None
         try:
@@ -61,6 +75,12 @@ def main() -> None:
                     if not any("Windows system tray ready" in log.read_text(encoding="utf-8") for log in logs):
                         time.sleep(0.25)
                         continue
+                    log_text = "\n".join(log.read_text(encoding="utf-8") for log in logs)
+                    assert "missing 1 required positional argument" not in log_text
+                    assert "POPUP Agoda (không có mã)" in log_text, "Legacy ID-less pending popup did not restore"
+                    saved = json.loads((config_dir / "state.json").read_text(encoding="utf-8"))
+                    assert saved["history"] == [legacy_history] and saved["pending_alerts"] == [legacy_pending]
+                    assert saved["mailbox_reads"]["incremental:test:123"] == mailbox_record
                     sounds = [config_dir / "sounds" / f"{source}-chime-v1.wav" for source in ("agoda", "expedia")]
                     assert sounds[0].read_bytes() != sounds[1].read_bytes(), "Provider sounds must differ"
                     for sound_file in sounds:
@@ -69,6 +89,7 @@ def main() -> None:
                     print("PASS: frozen updater handoff, EXE replacement, real Tk UI startup confirmed.", flush=True)
                     print("PASS: packaged Windows tray backend starts successfully.", flush=True)
                     print("PASS: packaged app creates two distinct provider WAV files in user data.", flush=True)
+                    print("PASS: legacy missing-ID popup restores; history and ten unfinished email UIDs preserved.", flush=True)
                     return
                 time.sleep(0.25)
             error_log = config_dir / "update-error.log"
