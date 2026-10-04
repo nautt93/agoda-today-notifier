@@ -200,6 +200,48 @@ def test_mixed_card_states_warn_only_for_positive_exact_charged_card(monkeypatch
         page.close()
 
 
+def test_full_pan_linked_to_paid_receipt_warns_every_metadata_block_without_claiming_all_paid(monkeypatch):
+    data = synthetic_traveloka_print()
+    data.rooms = data.rooms[:1]
+    data.cards = [
+        PrintCard({"pan": "4111-1111-1111-1111", "expiry": "07/2028", "cvv": "000", "amount": "VND 800,000",
+                   "status": "Unknown", "charged_related": "true"}, [1]),
+        PrintCard({"pan": "4111111111111111", "expiry": "08/2028", "cvv": "123", "amount": "VND 700,000",
+                   "status": "VCC has been charged", "charged_related": "true"}, []),
+        PrintCard({"pan": "5555-5555-5555-4444", "expiry": "09/2028", "cvv": "456", "amount": "VND 300,000",
+                   "status": "VCC has not been charged"}, [1]),
+    ]
+    captured = record_final_page_text(monkeypatch)
+    original = ImageDraw.ImageDraw.text
+    colors = []
+
+    def record_color(self, xy, text, *args, **kwargs):
+        colors.append((id(self._image), text, kwargs.get("fill")))
+        return original(self, xy, text, *args, **kwargs)
+
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", record_color)
+    page = render_booking_a4(data)
+    try:
+        text = " ".join(line for line, _ in captured[id(page)])
+        assert "TRAVELOKA / PHIẾU ĐẶT PHÒNG" in text
+        assert "ĐÃ THANH TOÁN - KHÔNG THU LẠI THẺ NÀY" not in text
+        assert text.count("THẺ ĐÃ ĐƯỢC THU - KHÔNG THU LẠI THẺ NÀY") == 1
+        assert text.count("TRÙNG SỐ THẺ CÓ GIAO DỊCH ĐÃ THU - KIỂM TRA THANH TOÁN TRƯỚC KHI THU") == 1
+        assert "Thông tin thanh toán chưa thống nhất." in text
+        assert "không thu trùng giao dịch đã thanh toán." in text
+        assert "Chỉ thu đúng khoản" not in text and "Khoản khách sạn thu:" not in text
+        assert "THANH TOÁN / KIỂM TRA TRƯỚC KHI THU" in text
+        assert "payment_completed" not in data.fields
+        for card in data.cards:
+            for key in ("pan", "expiry", "cvv", "amount", "status"):
+                assert card.fields[key] in text
+        warning_colors = [color for image_id, line, color in colors if image_id == id(page)
+                          and (line.startswith("THẺ ĐÃ ĐƯỢC THU") or line.startswith("TRÙNG SỐ THẺ"))]
+        assert warning_colors == ["#A03226", "#A03226"]
+    finally:
+        page.close()
+
+
 @pytest.mark.parametrize("area", ["booking", "room", "card"])
 def test_one_page_overflow_fails_without_omitting_or_leaking_fields(area):
     data = synthetic_traveloka_print()

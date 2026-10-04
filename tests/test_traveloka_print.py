@@ -81,7 +81,9 @@ def test_traveloka_print_has_full_guest_room_rate_contact_payment_and_transient_
         assert not CARD_KEYS & fields.keys()
         assert not any(card["pan"] in str(value) for value in fields.values())
     for value in (data, *data.cards, *data.rooms):
-        assert "4111" not in repr(value) and "000" not in repr(value)
+        assert value.__dataclass_params__.repr is False
+        assert repr(value) == object.__repr__(value)
+        assert "4111-1111-1111-1111" not in repr(value)
 
 
 def test_traveloka_original_confirmation_shape_without_card_never_invents_card_or_support_phone():
@@ -157,6 +159,13 @@ def test_traveloka_present_but_blank_or_unreadable_pan_refuses_instead_of_claimi
     source = (FIXTURES / "traveloka_print_test.html").read_text(encoding="utf-8")
     source = source.replace("4111-1111-1111-1111", value)
     with pytest.raises(TravelokaPrintError, match="thiếu số thẻ|Không in sai thẻ"):
+        parse_traveloka_print(confirmation(source))
+
+
+def test_traveloka_blank_pan_cannot_borrow_next_distinct_pan_header_value():
+    source = (FIXTURES / "traveloka_print_test.html").read_text(encoding="utf-8")
+    source = source.replace("<tr><td>Virtual Credit Card", "<tr><td>Card Number</td><td></td></tr><tr><td>Virtual Credit Card")
+    with pytest.raises(TravelokaPrintError, match="thiếu số thẻ"):
         parse_traveloka_print(confirmation(source))
 
 
@@ -266,11 +275,49 @@ def test_traveloka_pending_or_mixed_card_status_never_sets_global_paid_marker():
 
 @pytest.mark.parametrize("status", [
     "VCC has not been charged", "VCC has been not charged", "Card was not charged", "Card is not charged",
+    "VCC not charged", "VCC is uncharged", "VCC charge pending", "VCC charge failed", "VCC charge declined",
+    "VCC has been charged partially", "VCC has been charged not fully", "VCC has been charged, but not fully",
+    "VCC has been charged? No", "VCC has been charged only VND 100,000", "VCC has been charged back",
+    "If VCC has been charged, do not charge again", "VCC will be charged", "VCC may be charged",
+    "VCC would be charged", "When VCC has been charged, payment will be completed",
 ])
 def test_traveloka_negative_unlabelled_card_status_cannot_fall_back_to_completed_subject(status):
     data = parse_traveloka_print(receipt(status=status), expected())
     assert data.fields["payment_status"] == status
     assert "payment_completed" not in data.fields and "completed" not in data.cards[0].fields
+
+
+def test_traveloka_missing_card_status_never_uses_completed_subject_as_proof_of_card_charge():
+    source = receipt().get_content().replace("<p>VCC has been charged</p>", "")
+    data = parse_traveloka_print(receipt(html=source), expected())
+    assert "payment_completed" not in data.fields and "completed" not in data.cards[0].fields
+
+
+@pytest.mark.parametrize("qualifier", ["only VND 100,000", "No", "not yet"])
+def test_traveloka_wrapped_partial_card_statement_is_not_truncated_to_charged(qualifier):
+    source = receipt().get_content().replace("VCC has been charged</p>", f"VCC has been charged<br>{qualifier}</p>")
+    data = parse_traveloka_print(receipt(html=source), expected())
+    assert data.fields["payment_status"] == f"VCC has been charged {qualifier}"
+    assert "payment_completed" not in data.fields and "completed" not in data.cards[0].fields
+
+
+def test_traveloka_charged_receipt_warns_every_full_identical_pan_without_overwriting_card_details():
+    source = (FIXTURES / "traveloka_print_test.html").read_text(encoding="utf-8")
+    source = source.replace("<td>000</td>", "<td>123</td>").replace("07/2028", "08/2028")
+    data = parse_traveloka_print(confirmation(source), expected(), [receipt()])
+    assert len(data.cards) == 2
+    assert all(card.fields["charged_related"] == "true" for card in data.cards)
+    assert data.cards[0].fields["cvv"] == "123" and data.cards[0].fields["expiry"] == "08/2028"
+    assert data.cards[0].fields["status"] == "" and "completed" not in data.cards[0].fields
+    assert data.cards[1].fields["cvv"] == "000" and data.cards[1].fields["status"] == "VCC has been charged"
+
+
+def test_traveloka_masked_last_four_pan_alias_is_not_treated_as_same_charged_card():
+    source = (FIXTURES / "traveloka_print_test.html").read_text(encoding="utf-8").replace(
+        "4111-1111-1111-1111", "****-****-****-1111")
+    data = parse_traveloka_print(confirmation(source), expected(), [receipt()])
+    assert "charged_related" not in data.cards[0].fields
+    assert data.cards[1].fields["charged_related"] == "true"
 
 
 @pytest.mark.parametrize("status", ["VCC was charged", "Card is charged", "Virtual Credit Card has been charged"])

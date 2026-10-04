@@ -206,6 +206,32 @@ def _charged(status: str) -> bool:
     return is_explicitly_charged(status)
 
 
+def _unlabelled_card_status(body: str) -> str:
+    """Preserve a complete statement; a charged substring is not authorization."""
+    statements: list[str] = []
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        if not (re.search(r"\b(?:VCC|Card)\b", line, re.IGNORECASE)
+                and re.search(r"\b(?:charg(?:e|ed|ing)|uncharged|pending|failed|declined|partial(?:ly)?|unpaid)\b",
+                              line, re.IGNORECASE)):
+            continue
+        parts = [_clean(line)]
+        for following in lines[index + 1:index + 5]:
+            if not following.strip() or _cell_field(following):
+                break
+            # Continue wrapped status qualifiers, not another unrelated section.
+            if re.search(r"\b(?:partially|partial|no|not|fully|only|but|back|pending|failed|declined|if|unless|when|once)\b",
+                         following, re.IGNORECASE):
+                parts.append(_clean(following))
+            else:
+                break
+        statement = " ".join(parts).rstrip(".!").strip()
+        statements.append(statement)
+    # Contrary, conditional or qualified statements override a general positive
+    # summary. The exact classifier deliberately rejects all of those statements.
+    return next((value for value in statements if not _charged(value)), next(iter(statements), ""))
+
+
 def _card_blocks(rows: list[list[str]], room_count: int, status: str = "") -> list[PrintCard]:
     raw_cards: list[PrintCard] = []
     current: dict[str, str] = {}
@@ -231,8 +257,29 @@ def _card_blocks(rows: list[list[str]], room_count: int, status: str = "") -> li
         pan_fields = [item for item in explicit if item[0] == "pan"]
         if len(pan_fields) > 1:
             raise TravelokaPrintError("Email có nhiều thẻ chưa tách được. Không in thiếu thẻ; hãy kiểm tra email gốc.")
-        if pan_fields and not row_fields.get("pan"):
-            raise TravelokaPrintError("Email có trường thẻ nhưng thiếu số thẻ. Không in thiếu thẻ; hãy kiểm tra email gốc.")
+        if pan_fields:
+            # Only this PAN label's own value or a genuine scalar continuation
+            # belongs to this card. A following PAN header is another card block.
+            pan_value = pan_fields[0][1]
+            if not pan_value:
+                column = next(col for col, cell in enumerate(row)
+                              if (item := _cell_field(cell)) and item[0] == "pan")
+                candidates: list[str] = []
+                for cell in row[column + 1:]:
+                    if _cell_field(cell):
+                        break
+                    if cell.strip():
+                        candidates.append(_clean(cell))
+                if len(candidates) == 1:
+                    pan_value = candidates[0]
+                elif not candidates and row_index + 1 < len(rows):
+                    following = rows[row_index + 1]
+                    values = [cell for cell in following if cell.strip()]
+                    if len(values) == 1 and not _cell_field(values[0]):
+                        pan_value = _clean(values[0])
+            if not pan_value:
+                raise TravelokaPrintError("Email có trường thẻ nhưng thiếu số thẻ. Không in thiếu thẻ; hãy kiểm tra email gốc.")
+            row_fields["pan"] = pan_value
         if any(key == "card_scope" for key, _ in explicit):
             if current.get("pan"):
                 finish()
@@ -317,13 +364,12 @@ def _payment_receipt(message: Message, expected: BookingEvent | None, room_count
     if payment_id:
         fields["payment_id"] = payment_id.group(1)
     status = fields.get("payment_status", "")
+    observed_status = _unlabelled_card_status(body)
+    if observed_status and (not status or not _charged(observed_status)):
+        status = observed_status
     if not status:
-        # A negative status must never fall through to the positive subject label.
-        found = re.search(
-            r"\b(?:VCC|Card|Virtual Credit Card)\s+(?:has\s+not\s+been|has\s+been\s+not|was\s+not|is\s+not)\s+charged\b",
-            body, re.IGNORECASE,
-        ) or re.search(r"\b(?:VCC|Card|Virtual Credit Card)\s+(?:has been|was|is)\s+charged\b", body, re.IGNORECASE)
-        status = _clean(found.group()) if found else "Payment Completed"
+        # The subject is a receipt category, not proof that a particular VCC was charged.
+        status = "Trạng thái VCC chưa được xác nhận trong email"
     fields["payment_status"] = status
     cards = _card_blocks(rows, room_count, status)
     completed = _charged(status) and all(_charged(card.fields.get("status", "")) for card in cards)
@@ -349,6 +395,14 @@ def _merge_receipts(data: ExpediaPrintData, messages: Sequence[Message]) -> None
     if receipts and all(receipt.completed for receipt in receipts) and all(
             _charged(card.fields.get("status", "")) for card in data.cards):
         data.fields["payment_completed"] = "true"
+    charged_pans = {re.sub(r"[ -]", "", card.fields.get("pan", "")) for receipt in receipts for card in receipt.cards
+                    if card.fields.get("completed") == "true"}
+    charged_pans = {pan for pan in charged_pans if re.fullmatch(r"\d{13,19}", pan)}
+    for card in data.cards:
+        if re.sub(r"[ -]", "", card.fields.get("pan", "")) in charged_pans:
+            # Do not merge or overwrite expiry/CVC/amount/scope/raw status. An
+            # identical full PAN elsewhere still needs an explicit no-recharge warning.
+            card.fields["charged_related"] = "true"
 
 
 def parse_traveloka_print(message: Message, expected: BookingEvent | None = None,

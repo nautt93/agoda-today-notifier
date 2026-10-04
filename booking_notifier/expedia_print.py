@@ -269,9 +269,12 @@ def is_explicitly_charged(status: str) -> bool:
 def render_booking_a4(data: ExpediaPrintData, font_path: str | None = None) -> Image.Image:
     """Exactly one 300-dpi A4 bitmap, in memory only; never silently clip fields."""
     source = data.booking.source
-    payment_completed = data.fields.get("payment_completed") == "true"
-    payable_label = f"Đã thanh toán {source}" if payment_completed else f"Thu {source}"
     charged_cards = [is_explicitly_charged(card.fields.get("status", "")) for card in data.cards]
+    related_charged_cards = [card.fields.get("charged_related") == "true" for card in data.cards]
+    status_conflict = any(related and not charged for related, charged in zip(related_charged_cards, charged_cards, strict=True))
+    payment_completed = data.fields.get("payment_completed") == "true" and not status_conflict
+    payable_label = (f"Đã thanh toán {source}" if payment_completed else "Khoản cần đối chiếu"
+                     if status_conflict else f"Thu {source}")
     if source not in {"Expedia", "Traveloka"}:
         raise ExpediaPrintError("Nguồn booking chưa hỗ trợ phiếu in A4.")
     if (len(data.booking.guest_name or "") + len(data.booking.booking_id or "") + len(data.booking.total_revenue or "")
@@ -365,10 +368,13 @@ def render_booking_a4(data: ExpediaPrintData, font_path: str | None = None) -> I
                 write(f"Chỉ dẫn nhóm {index}: {fields['notes']}")
             if fields.get("cancellation_policy") and fields["cancellation_policy"] != data.fields.get("cancellation_policy"):
                 write(f"Chính sách hủy nhóm {index}: {fields['cancellation_policy']}")
-        section("THANH TOÁN ĐÃ HOÀN TẤT / THẺ GHI TRONG EMAIL" if payment_completed else "THANH TOÁN / THẺ THU TIỀN")
+        payment_heading = ("THANH TOÁN ĐÃ HOÀN TẤT / THẺ GHI TRONG EMAIL" if payment_completed
+                           else "THANH TOÁN / KIỂM TRA TRƯỚC KHI THU" if status_conflict else "THANH TOÁN / THẺ THU TIỀN")
+        section(payment_heading)
         # Room-specific amounts above are authoritative. Do not sum ambiguous booking-wide totals.
         if len(data.rooms) == 1 or source == "Traveloka":
-            amount_label = "Khoản thanh toán ghi trong email" if payment_completed else "Khoản khách sạn thu"
+            amount_label = ("Khoản thanh toán ghi trong email" if payment_completed else "Khoản cần đối chiếu"
+                            if status_conflict else "Khoản khách sạn thu")
             write(f"{amount_label}: {booking.total_revenue or 'Chưa rõ - kiểm tra email gốc'}", body_size + 1, True)
         if source == "Traveloka":
             details(data.fields, [("subtotal", "Trước điều chỉnh"), ("adjustment", "Điều chỉnh"), ("payable", payable_label)])
@@ -381,12 +387,15 @@ def render_booking_a4(data: ExpediaPrintData, font_path: str | None = None) -> I
         details(data.fields, [("refund", "Hoàn tiền"), ("receipt_total", "Tổng thanh toán"), ("vcc_amount", "Giá trị VCC")])
         if not data.cards:
             write("Email không có số thẻ. Không tự tạo số thẻ hoặc CVV.", bold=True)
-        for card, already_charged in zip(data.cards, charged_cards, strict=True):
+        for card, already_charged, related_charged in zip(data.cards, charged_cards, related_charged_cards, strict=True):
             fields = card.fields
             write("Thẻ cho nhóm phòng " + ", ".join(map(str, card.rooms)) if card.rooms
                   else f"Thẻ {source} ghi trong email - kiểm tra phân bổ khoản thu", bold=True)
             if already_charged:
                 write("THẺ ĐÃ ĐƯỢC THU - KHÔNG THU LẠI THẺ NÀY", body_size + 1, True, color="#A03226")
+            elif related_charged:
+                write("TRÙNG SỐ THẺ CÓ GIAO DỊCH ĐÃ THU - KIỂM TRA THANH TOÁN TRƯỚC KHI THU", body_size + 1, True,
+                      color="#A03226")
             write(f"Số thẻ: {fields.get('pan', 'Không có trong email')}", body_size + 2, True)
             details(fields, [("expiry", "Hết hạn"), ("cvv", "CVV"), ("activation", "Kích hoạt")])
             details(fields, [("holder", "Chủ thẻ"), ("address", "Địa chỉ thanh toán")])
@@ -399,6 +408,8 @@ def render_booking_a4(data: ExpediaPrintData, font_path: str | None = None) -> I
             write(f"Chính sách hủy: {data.fields['cancellation_policy']}")
         if payment_completed:
             instruction = "Phiếu xác nhận thanh toán đã hoàn tất. Không dùng thông tin thẻ này để thu tiền lần nữa."
+        elif status_conflict:
+            instruction = "Thông tin thanh toán chưa thống nhất. Kiểm tra email/biên nhận trước khi thu; không thu trùng giao dịch đã thanh toán."
         elif any(charged_cards):
             instruction = f"Chỉ thu khoản chưa thanh toán mà {source} cho phép; không thu lại thẻ được ghi là đã thu tiền."
         else:
