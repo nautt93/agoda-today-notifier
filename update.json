@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.14",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.14/Booking-Checkin-Hom-Nay-1.7.14.exe",
-  "sha256": "57c7c82b130d19357e2bbf0f99fd50115953f3de3d69bc5bb5b42b2d700002a4",
-  "size": 23990840,
-  "notes": "Expedia có nút In phiếu 1 trang A4 trong popup và menu chuột phải. Phiếu tóm tắt đủ tên khách, liên hệ, các phòng/số lượng, ngày đến/đi, khoản thu và thông tin thẻ có trong email; giữ riêng các thẻ của từng nhóm phòng. Xem trước rồi chọn máy in Windows; ép A4 dọc, chỉ một trang/một bản, không cắt trang đầu email. Thông tin thẻ chỉ xử lý trong bộ nhớ, không lưu lịch sử/log/Excel/tệp tạm; bảo quản phiếu và hàng đợi máy in an toàn. In/hủy in không xác nhận booking hay dừng âm báo, vẫn dùng khi ẩn khay. Giữ hai nút Sao chép/Đóng lớn, Agoda không đổi. Giữ Excel 9 cột, âm thanh riêng từng nguồn, chỉ báo check-in hôm nay, F92 và OTA an toàn.",
-  "signature": "JhZaCGZ/N9DY0IodatHU6KrJ6tZW+b8V0GvFAGfuQvdtesr7BEokV7NHGQBq3mfsJ5J5hw8BYpbGBGFJ9unSDw=="
+  "version": "1.7.15",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.15/Booking-Checkin-Hom-Nay-1.7.15.exe",
+  "sha256": "978db70bd8c62b3ae3cd4e9fa34b77d9b9b2209b03b8c4fcfb348bea8eceafd5",
+  "size": 23991233,
+  "notes": "Sửa lỗi BookingEvent thiếu booking_id làm dừng quét email: tương thích lịch sử/popup cũ thiếu mã hoặc nguồn, mã JSON dạng số và email Agoda chưa đọc được mã. Giữ lịch sử, cấu hình, khóa chống trùng, mốc UID và thư chưa xử lý; sau cập nhật tự đọc lại thư đang chờ, không reset hộp thư. Agoda thiếu mã vẫn báo khi là xác nhận mới check-in hôm nay; booking ngày khác và chỉnh sửa/hủy vẫn bỏ qua. Đã kiểm tra phục hồi 10 thư đang chờ khi không có thư mới, popup sau khởi động lại, chép Excel 9 cột, chuyển thông báo khi ẩn khay và cập nhật EXE thực tế. Giữ âm thanh riêng, in Expedia A4 và F92.",
+  "signature": "lTPMiS5an/Km8hRW7Lewmm6THB/0lJZVeR/AzeS2DfPbTxgA20eq3yCVAfCrBocI8owAt2ODW3opgjHd3IuHBw=="
 }
