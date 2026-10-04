@@ -138,6 +138,7 @@ def test_expedia_late_duplicate_event_does_not_reopen_popup_or_replay_sound(tmp_
     app = BookingNotifierApp(root)
     app.play_sound = Mock(side_effect=lambda: setattr(app, "sound_active", True))
     app.f92_worker.notify = Mock()
+    app.config["f92_enabled"] = True  # Exercise the mocked F92 notification path, not real hardware.
     try:
         wait_for_tray(app)
         app.on_close()
