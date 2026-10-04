@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.15",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.15/Booking-Checkin-Hom-Nay-1.7.15.exe",
-  "sha256": "978db70bd8c62b3ae3cd4e9fa34b77d9b9b2209b03b8c4fcfb348bea8eceafd5",
-  "size": 23991233,
-  "notes": "Sửa lỗi BookingEvent thiếu booking_id làm dừng quét email: tương thích lịch sử/popup cũ thiếu mã hoặc nguồn, mã JSON dạng số và email Agoda chưa đọc được mã. Giữ lịch sử, cấu hình, khóa chống trùng, mốc UID và thư chưa xử lý; sau cập nhật tự đọc lại thư đang chờ, không reset hộp thư. Agoda thiếu mã vẫn báo khi là xác nhận mới check-in hôm nay; booking ngày khác và chỉnh sửa/hủy vẫn bỏ qua. Đã kiểm tra phục hồi 10 thư đang chờ khi không có thư mới, popup sau khởi động lại, chép Excel 9 cột, chuyển thông báo khi ẩn khay và cập nhật EXE thực tế. Giữ âm thanh riêng, in Expedia A4 và F92.",
-  "signature": "lTPMiS5an/Km8hRW7Lewmm6THB/0lJZVeR/AzeS2DfPbTxgA20eq3yCVAfCrBocI8owAt2ODW3opgjHd3IuHBw=="
+  "version": "1.7.16",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.16/Booking-Checkin-Hom-Nay-1.7.16.exe",
+  "sha256": "0706bf12c0044df48a03af0dfe216146475b0d7157d43eab7b97ddfbbc83b8c2",
+  "size": 23992732,
+  "notes": "Sửa báo trùng Expedia: sự kiện IMAP đến muộn sau khi popup đã đóng không được mở lại hoặc phát lại âm thanh. Kiểm tra dấu xác nhận đã lưu trước khi xếp hàng và mở popup; đóng lặp không thêm dòng lịch sử. Lọc pending trùng/đã đóng khi phục hồi, giữ nguyên lịch sử cũ, cấu hình và mốc UID. Email gửi lại với Message-ID/UID khác không báo lại; booking khác của cùng khách vẫn báo. Chỉ nhận xác nhận mới check-in hôm nay. Đã kiểm tra mẫu Expedia 04/10, email gửi lại, đọc lại, khởi động lại, popup/âm thanh/F92 khi ẩn khay và cập nhật EXE thực tế. Giữ chép Excel 9 cột, in Expedia A4 và sửa dữ liệu cũ thiếu booking_id.",
+  "signature": "1bPfUe+o7yukek9EmJ3OYRqKN8BCnUTC/QAkRrM6cANzJ7OXbO0G2wWsdcnRVmDGnyPRRGr5CL6BrOrhZhlJBg=="
 }
