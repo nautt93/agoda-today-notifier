@@ -95,11 +95,19 @@ def main() -> None:
                         assert installed_config[f"{source}_sound_file"] == str(copied)
                         assert digest(copied) == digest(project / "assets" / "sounds" / filename)
                         hashes.add(digest(copied))
+                        pcm_filename = filename.replace(".mp3", "-pcm.wav")
+                        pcm = config_dir / "sounds" / pcm_filename
+                        assert digest(pcm) == digest(project / "assets" / "sounds" / pcm_filename)
+                        with wave.open(str(pcm), "rb") as sound:
+                            assert sound.getnchannels() == 1 and sound.getsampwidth() == 2
+                            assert sound.getframerate() == 44100
+                            assert 2.5 <= sound.getnframes() / sound.getframerate() <= 2.9
                     assert len(hashes) == 3, "All three supplied source files must be distinct"
                     print("PASS: frozen updater handoff, EXE replacement, real Tk UI startup confirmed.", flush=True)
                     print("PASS: packaged Windows tray backend starts successfully.", flush=True)
                     print("PASS: packaged app creates two distinct provider WAV files in user data.", flush=True)
                     print("PASS: all three exact supplied MP3s are bundled, migrated and source-mapped in user data.", flush=True)
+                    print("PASS: decoded same-source PCM fallback files bundled and installed for all three providers.", flush=True)
                     print("PASS: legacy missing-ID popup restores; history and ten unfinished email UIDs preserved.", flush=True)
                     return
                 time.sleep(0.25)

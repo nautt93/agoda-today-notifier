@@ -1,5 +1,5 @@
 {
-  "description": "Original user-supplied booking notification audio; preserved without transcoding.",
+  "description": "Original user-supplied MP3 bytes preserved unchanged; matching PCM fallback decoded by miniaudio 1.71 without resampling or editing the recording.",
   "audio_format": "MPEG Layer III",
   "sample_rate_hz": 44100,
   "channels": 1,
@@ -9,19 +9,34 @@
       "filename": "1-agoda.mp3",
       "bytes": 41422,
       "duration_seconds": 2.56,
-      "sha256": "3fa61f373996074a05dc1851d96510dea3081df922e3efd17a9910582ed920c9"
+      "sha256": "3fa61f373996074a05dc1851d96510dea3081df922e3efd17a9910582ed920c9",
+      "pcm_filename": "1-agoda-pcm.wav",
+      "pcm_bytes": 222110,
+      "pcm_sha256": "65f52af3772aac91753e9c8646963ce9dc25e02e8b533e7a19b52865871050ec",
+      "pcm_sample_frames": 111033,
+      "pcm_duration_seconds": 2.5177551020408164
     },
     "Expedia": {
       "filename": "2-expedia.mp3",
       "bytes": 41422,
       "duration_seconds": 2.56,
-      "sha256": "5badf83c9b0dbccf032f49d16d8d510693f2d55084cf7a7086ff55b277bffb69"
+      "sha256": "5badf83c9b0dbccf032f49d16d8d510693f2d55084cf7a7086ff55b277bffb69",
+      "pcm_filename": "2-expedia-pcm.wav",
+      "pcm_bytes": 222504,
+      "pcm_sha256": "732e0a4a9ab44ff5f10dbb6c9e9f863b6837a2736a19cb8668c6688f599c0b38",
+      "pcm_sample_frames": 111230,
+      "pcm_duration_seconds": 2.522222222222222
     },
     "Traveloka": {
       "filename": "3-traveloka.mp3",
       "bytes": 43511,
       "duration_seconds": 2.690612,
-      "sha256": "dbd9535a22f4f6f48952f3598048b213923818dc633b45d28813e4577015762e"
+      "sha256": "dbd9535a22f4f6f48952f3598048b213923818dc633b45d28813e4577015762e",
+      "pcm_filename": "3-traveloka-pcm.wav",
+      "pcm_bytes": 234626,
+      "pcm_sha256": "b7f80a489713fe6e553d392fb84330c2a2323c6f31835ec1b055423c9ce3123a",
+      "pcm_sample_frames": 117291,
+      "pcm_duration_seconds": 2.659659863945578
     }
   }
 }

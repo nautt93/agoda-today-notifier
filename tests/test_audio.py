@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import array
 import hashlib
 import json
 import runpy
@@ -11,16 +12,21 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import miniaudio
 import pytest
 
 import app as desktop
 from app import BookingNotifierApp
 from booking_notifier.audio import (
     SAMPLE_RATE,
+    SOURCE_PCM_FILES,
+    SOURCE_PCM_SHA256,
     SOURCE_SOUND_FILES,
     SOURCE_SOUND_KEYS,
     SOURCE_SOUND_SHA256,
     WindowsMciAudioPlayer,
+    WindowsMciError,
+    bundled_source_pcm,
     bundled_source_sound,
     configured_sound_paths,
     default_source_sound,
@@ -96,7 +102,7 @@ def test_pyinstaller_spec_bundles_all_exact_source_mp3_files():
         "SPECPATH": str(project_dir), "Analysis": analysis, "PYZ": Mock(), "EXE": Mock(),
     })
     datas = analysis.call_args.kwargs["datas"]
-    assert {Path(source).name for source, destination in datas} == {*SOURCE_SOUND_FILES.values(), "manifest.json"}
+    assert {Path(source).name for source, destination in datas} == {*SOURCE_SOUND_FILES.values(), *SOURCE_PCM_FILES.values(), "manifest.json"}
     for source, destination in datas:
         assert Path(source).parent == project_dir / "assets" / "sounds"
         assert Path(source).is_file() and destination == "assets/sounds"
@@ -122,7 +128,7 @@ def test_frozen_resource_resolution_uses_meipass_and_never_cwd(tmp_path, monkeyp
     asset_dir = Path(__file__).resolve().parent.parent / "assets" / "sounds"
     frozen_dir = tmp_path / "onefile extraction" / "assets" / "sounds"
     frozen_dir.mkdir(parents=True)
-    for filename in SOURCE_SOUND_FILES.values():
+    for filename in (*SOURCE_SOUND_FILES.values(), *SOURCE_PCM_FILES.values()):
         shutil.copyfile(asset_dir / filename, frozen_dir / filename)
     monkeypatch.setattr(sys, "_MEIPASS", str(frozen_dir.parent.parent), raising=False)
     work_dir = tmp_path / "unrelated working directory"
@@ -133,22 +139,27 @@ def test_frozen_resource_resolution_uses_meipass_and_never_cwd(tmp_path, monkeyp
         assert path.name == filename
         assert path.read_bytes() == (frozen_dir / filename).read_bytes()
         assert path.parent != frozen_dir
+        pcm = bundled_source_pcm(source, tmp_path / "persistent sounds")
+        assert pcm.name == SOURCE_PCM_FILES[source]
+        assert pcm.read_bytes() == (frozen_dir / SOURCE_PCM_FILES[source]).read_bytes()
+        assert pcm.parent != frozen_dir
 
 
 @pytest.mark.parametrize("damage", ["missing", "corrupt"])
-def test_invalid_packaged_asset_is_rejected_without_overwriting_existing_file(tmp_path, monkeypatch, damage):
+@pytest.mark.parametrize(("installer", "filename"), [(bundled_source_sound, "3-traveloka.mp3"), (bundled_source_pcm, "3-traveloka-pcm.wav")])
+def test_invalid_packaged_asset_is_rejected_without_overwriting_existing_file(tmp_path, monkeypatch, damage, installer, filename):
     frozen_root = tmp_path / "frozen"
     frozen_dir = frozen_root / "assets" / "sounds"
     frozen_dir.mkdir(parents=True)
     if damage == "corrupt":
-        (frozen_dir / "3-traveloka.mp3").write_bytes(b"not the supplied MP3")
+        (frozen_dir / filename).write_bytes(b"not the supplied recording")
     monkeypatch.setattr(sys, "_MEIPASS", str(frozen_root), raising=False)
     destination = tmp_path / "sounds"
     destination.mkdir()
-    preserved = destination / "3-traveloka.mp3"
+    preserved = destination / filename
     preserved.write_bytes(b"previous destination remains untouched")
     with pytest.raises((FileNotFoundError, ValueError)):
-        bundled_source_sound("Traveloka", destination)
+        installer("Traveloka", destination)
     assert preserved.read_bytes() == b"previous destination remains untouched"
     assert not list(destination.glob("*.tmp"))
 
@@ -167,14 +178,98 @@ def test_bundled_copy_failure_is_atomic_and_cleans_temporary_file(tmp_path, monk
         bundled_source_sound("../../untrusted", directory)
 
 
+@pytest.mark.parametrize("source", ["Agoda", "Expedia", "Traveloka"])
+def test_supplied_mp3_really_decodes_offline_and_pcm_fallback_is_same_recording(tmp_path, source):
+    """Decode independently of MCI/audio devices; never only inspect MP3 headers."""
+    key = source.lower()
+    path = bundled_source_sound(source, tmp_path / "sounds")
+    decoded = miniaudio.mp3_read_s16(path.read_bytes())
+    metadata = json.loads((Path(__file__).resolve().parent.parent / "assets" / "sounds" / "manifest.json").read_text(encoding="utf-8"))["sounds"][source]
+    assert decoded.nchannels == 1 and decoded.sample_rate == 44100
+    assert decoded.sample_format is miniaudio.SampleFormat.SIGNED16
+    assert decoded.num_frames == len(decoded.samples) == metadata["pcm_sample_frames"]
+    assert 2.5 <= decoded.duration <= 2.8
+    assert max(abs(sample) for sample in decoded.samples) > 1000
+    pcm = bundled_source_pcm(source, tmp_path / "sounds")
+    data = pcm.read_bytes()
+    assert pcm.name == metadata["pcm_filename"] == SOURCE_PCM_FILES[key]
+    assert len(data) == metadata["pcm_bytes"]
+    assert hashlib.sha256(data).hexdigest() == SOURCE_PCM_SHA256[key] == metadata["pcm_sha256"]
+    with wave.open(str(pcm), "rb") as sound:
+        assert (sound.getnchannels(), sound.getsampwidth(), sound.getframerate(), sound.getnframes()) == (1, 2, 44100, decoded.num_frames)
+        recorded_samples = array.array("h", sound.readframes(sound.getnframes()))
+        # ARM NEON versus Windows x64 SIMD may round at most tiny PCM units;
+        # require the entire decoded waveform, not merely matching metadata.
+        assert len(recorded_samples) == len(decoded.samples)
+        assert max(abs(recorded - decoded_sample) for recorded, decoded_sample in zip(recorded_samples, decoded.samples, strict=True)) <= 2
+    timestamp = pcm.stat().st_mtime_ns
+    assert bundled_source_pcm(source, pcm.parent).stat().st_mtime_ns == timestamp
+    pcm.write_bytes(b"damaged fallback")
+    assert bundled_source_pcm(source, pcm.parent).read_bytes() == data
+    assert not list(pcm.parent.glob("*.tmp"))
+
+
+def _require_mci_mpegvideo(probe: Path, player: WindowsMciAudioPlayer) -> None:
+    """Only skip unavailable infrastructure after a known-good PCM WAV also fails.
+
+    Microsoft's error table distinguishes initialization/driver errors from
+    INVALID_FILE. Locale-independent codes come from mmsystem.h. Invalid-file,
+    path, command and arbitrary failures are not treated as unavailable hosts.
+    """
+    try:
+        player._send(f'open "{probe}" type mpegvideo alias bookingdesk_mci_probe')
+    except WindowsMciError as exc:
+        infrastructure = {266: "MCIERR_CANNOT_LOAD_DRIVER", 276: "MCIERR_DEVICE_NOT_READY", 277: "MCIERR_INTERNAL"}
+        name = infrastructure.get(exc.code & 0xFFFF)
+        if name:
+            pytest.skip(f"Known-good PCM WAV cannot initialize Windows MPEGVideo MCI: {name} ({exc.code}); offline MP3/PCM decoding tested separately; audible playback not verified on this host.")
+        raise
+    else:
+        player._send("close bookingdesk_mci_probe")
+
+
+@pytest.fixture(scope="module")
+def windows_mci_decoder(tmp_path_factory):
+    probe = default_source_sound("Agoda", tmp_path_factory.mktemp("mci-known-good-pcm"))
+    with wave.open(str(probe), "rb") as wav:
+        assert (wav.getnchannels(), wav.getsampwidth(), wav.getframerate(), wav.getnframes()) == (1, 2, SAMPLE_RATE, SAMPLE_RATE * 3)
+    player = WindowsMciAudioPlayer()
+    _require_mci_mpegvideo(probe, player)
+    return player
+
+
+@pytest.mark.parametrize("code", [266, 276, 277])
+def test_mci_preflight_skip_requires_known_good_pcm_infrastructure_failure(tmp_path, code):
+    player = Mock()
+    player._send.side_effect = WindowsMciError(code, "localized infrastructure error")
+    with pytest.raises(pytest.skip.Exception, match="Known-good PCM WAV cannot initialize"):
+        _require_mci_mpegvideo(tmp_path / "known-good.wav", player)
+    assert player._send.call_args.args == (f'open "{tmp_path / "known-good.wav"}" type mpegvideo alias bookingdesk_mci_probe',)
+
+
+@pytest.mark.parametrize("error", [WindowsMciError(296, "invalid file"), WindowsMciError(275, "file not found"), RuntimeError("unknown failure")])
+def test_mci_preflight_does_not_hide_invalid_media_or_unexpected_failures(tmp_path, error):
+    player = Mock()
+    player._send.side_effect = error
+    with pytest.raises(type(error), match=str(error)):
+        _require_mci_mpegvideo(tmp_path / "known-good.wav", player)
+
+
+def test_mci_preflight_success_closes_probe_before_testing_supplied_mp3(tmp_path):
+    player = Mock()
+    _require_mci_mpegvideo(tmp_path / "known-good.wav", player)
+    assert len(player._send.call_args_list) == 2
+    assert player._send.call_args.args == ("close bookingdesk_mci_probe",)
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows MCI decoder required")
 @pytest.mark.parametrize("source", ["Agoda", "Expedia", "Traveloka"])
-def test_supplied_mp3_decodes_with_real_windows_mci_without_playback(tmp_path, source):
+def test_supplied_mp3_decodes_with_real_windows_mci_without_playback(tmp_path, source, windows_mci_decoder):
     import ctypes
     from ctypes import wintypes
 
     path = bundled_source_sound(source, tmp_path / "sounds")
-    player = WindowsMciAudioPlayer()
+    player = windows_mci_decoder
     alias = "bookingdesk_codec_test"
     opened = False
     try:
@@ -263,19 +358,31 @@ def test_missing_bundled_asset_uses_legacy_not_other_provider(tmp_path, monkeypa
     app, winsound = audio_app(tmp_path, monkeypatch)
     legacy = default_source_sound("Expedia", tmp_path)
     monkeypatch.setattr(desktop, "bundled_source_sound", Mock(side_effect=FileNotFoundError("no bundled audio")))
+    monkeypatch.setattr(desktop, "bundled_source_pcm", Mock(side_effect=FileNotFoundError("no bundled PCM")))
     app._start_source_sound("Traveloka", {"traveloka_sound_file": "missing.mp3", "agoda_sound_file": "other.wav", "sound_file": str(legacy)})
     assert app.sound_uses_file and winsound.PlaySound.call_args.args[0] == str(legacy)
     app.mp3_player.play_loop.assert_not_called()
 
 
-def test_corrupt_source_audio_falls_back_to_builtin(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source", ["Agoda", "Expedia", "Traveloka"])
+def test_mci_failure_uses_matching_supplied_recording_pcm_before_common_or_synthetic(tmp_path, monkeypatch, source):
     app, winsound = audio_app(tmp_path, monkeypatch)
     selected = tmp_path / "corrupt.mp3"
     selected.write_bytes(b"not mp3")
     app.mp3_player.play_loop.side_effect = RuntimeError("bad codec")
-    app._start_source_sound("Agoda", {"agoda_sound_file": str(selected)})
+    app._start_source_sound(source, {f"{source.lower()}_sound_file": str(selected), "sound_file": "common.wav"})
     assert app.sound_active and app.sound_uses_file
-    assert Path(winsound.PlaySound.call_args.args[0]).name == "agoda-chime-v1.wav"
+    assert Path(winsound.PlaySound.call_args.args[0]).name == SOURCE_PCM_FILES[source.lower()]
+    winsound.MessageBeep.assert_not_called()
+
+
+def test_missing_recorded_pcm_and_failed_mci_falls_back_to_same_source_synthetic_chime(tmp_path, monkeypatch):
+    app, winsound = audio_app(tmp_path, monkeypatch)
+    app.mp3_player.play_loop.side_effect = RuntimeError("MCI unavailable")
+    monkeypatch.setattr(desktop, "bundled_source_pcm", Mock(side_effect=FileNotFoundError("no bundled PCM")))
+    app._start_source_sound("Traveloka", {})
+    assert app.sound_active and app.sound_uses_file
+    assert Path(winsound.PlaySound.call_args.args[0]).name == "traveloka-chime-v1.wav"
     winsound.MessageBeep.assert_not_called()
 
 

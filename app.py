@@ -15,6 +15,7 @@ from typing import Any
 from booking_notifier.audio import (
     SOURCE_SOUND_KEYS,
     WindowsMciAudioPlayer,
+    bundled_source_pcm,
     bundled_source_sound,
     configured_sound_paths,
     default_source_sound,
@@ -1188,6 +1189,10 @@ class BookingNotifierApp:
                 candidates.append(bundled_source_sound(source, APP_DIR / "sounds"))
             except Exception:
                 LOGGER.exception("Cannot prepare bundled %s MP3; continue with fallback audio", source)
+            try:
+                candidates.append(bundled_source_pcm(source, APP_DIR / "sounds"))
+            except Exception:
+                LOGGER.exception("Cannot prepare bundled %s PCM; continue with fallback audio", source)
             candidates.extend(configured_sound_paths({"sound_file": config.get("sound_file", "")}, source))
             for path in dict.fromkeys(candidates):
                 if play_file(path):

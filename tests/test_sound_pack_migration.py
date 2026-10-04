@@ -25,6 +25,8 @@ def test_new_sound_pack_replaces_old_choices_once_without_changing_credentials(t
         path = Path(installed[SOURCE_SOUND_KEYS[source]])
         assert path == tmp_path / "sounds" / filename
         assert hashlib.sha256(path.read_bytes()).hexdigest() == SOURCE_SOUND_SHA256[source]
+        pcm = tmp_path / "sounds" / audio.SOURCE_PCM_FILES[source]
+        assert hashlib.sha256(pcm.read_bytes()).hexdigest() == audio.SOURCE_PCM_SHA256[source]
     for key in ("email_address", "password_encrypted", "sound_file", "f92_port", "poll_seconds", "update_manifest_source"):
         assert installed[key] == previous[key]
     # Once applied, an intentional later custom source choice survives restarts.
@@ -39,6 +41,17 @@ def test_partial_pack_failure_does_not_change_saved_sound_choices(tmp_path, monk
     original = store.path.read_bytes()
     monkeypatch.setattr(audio, "bundled_source_sound", Mock(side_effect=[tmp_path / "1-agoda.mp3", OSError("missing asset")]))
     with pytest.raises(OSError, match="missing asset"):
+        store.install_source_sound_pack(tmp_path / "sounds")
+    assert store.path.read_bytes() == original
+    assert store.load()["source_sound_pack"] == ""
+
+
+def test_pcm_pack_failure_does_not_commit_partial_mapping(tmp_path, monkeypatch):
+    store = ConfigStore(tmp_path / "config.json")
+    store.save({"agoda_sound_file": "keep-agoda.wav", "traveloka_sound_file": "keep-traveloka.mp3"})
+    original = store.path.read_bytes()
+    monkeypatch.setattr(audio, "bundled_source_pcm", Mock(side_effect=OSError("missing PCM asset")))
+    with pytest.raises(OSError, match="missing PCM asset"):
         store.install_source_sound_pack(tmp_path / "sounds")
     assert store.path.read_bytes() == original
     assert store.load()["source_sound_pack"] == ""

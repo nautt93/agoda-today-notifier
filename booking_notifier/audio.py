@@ -22,6 +22,12 @@ SOURCE_SOUND_SHA256 = {
     "expedia": "5badf83c9b0dbccf032f49d16d8d510693f2d55084cf7a7086ff55b277bffb69",
     "traveloka": "dbd9535a22f4f6f48952f3598048b213923818dc633b45d28813e4577015762e",
 }
+SOURCE_PCM_FILES = {source: Path(filename).stem + "-pcm.wav" for source, filename in SOURCE_SOUND_FILES.items()}
+SOURCE_PCM_SHA256 = {
+    "agoda": "65f52af3772aac91753e9c8646963ce9dc25e02e8b533e7a19b52865871050ec",
+    "expedia": "732e0a4a9ab44ff5f10dbb6c9e9f863b6837a2736a19cb8668c6688f599c0b38",
+    "traveloka": "b7f80a489713fe6e553d392fb84330c2a2323c6f31835ec1b055423c9ce3123a",
+}
 CHIME_NOTES = {
     "agoda": (659.25, 880.0),
     "expedia": (523.25, 659.25, 783.99),
@@ -51,13 +57,27 @@ def bundled_source_sound(source: str, directory: Path) -> Path:
     Existing intact copies are reused; damaged copies are repaired from the
     verified package, never by silently using another provider's file.
     """
+    return _install_bundled_audio(source, directory, SOURCE_SOUND_FILES, SOURCE_SOUND_SHA256)
+
+
+def bundled_source_pcm(source: str, directory: Path) -> Path:
+    """Install the same supplied recording as PCM WAV when MP3/MCI is unavailable.
+
+    These WAVs were decoded once at build time without resampling or changing
+    the recording. No decoder library or media component is needed at runtime.
+    The original, byte-identical MP3 remains the first playback choice.
+    """
+    return _install_bundled_audio(source, directory, SOURCE_PCM_FILES, SOURCE_PCM_SHA256)
+
+
+def _install_bundled_audio(source: str, directory: Path, filenames: dict[str, str], hashes: dict[str, str]) -> Path:
     key = source.strip().lower()
-    filename = SOURCE_SOUND_FILES.get(key)
+    filename = filenames.get(key)
     if filename is None:
         raise ValueError("Nguồn booking chưa có tệp âm thanh đi kèm.")
     bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
     data = (bundle_root / "assets" / "sounds" / filename).read_bytes()
-    expected_hash = SOURCE_SOUND_SHA256[key]
+    expected_hash = hashes[key]
     if hashlib.sha256(data).hexdigest() != expected_hash:
         raise ValueError(f"Tệp âm thanh đi kèm {source.strip()} không hợp lệ.")
     directory = Path(directory)
@@ -121,6 +141,14 @@ def default_source_sound(source: str, directory: Path) -> Path:
     return path
 
 
+class WindowsMciError(RuntimeError):
+    """An MCI failure with its original code, independent of Windows language."""
+
+    def __init__(self, code: int, message: str):
+        self.code = int(code)
+        super().__init__(message)
+
+
 class WindowsMciAudioPlayer:
     ALIAS = "bookingdesk_alert_mp3"
 
@@ -137,7 +165,7 @@ class WindowsMciAudioPlayer:
             error = ctypes.create_unicode_buffer(256)
             winmm.mciGetErrorStringW.argtypes = (wintypes.DWORD, wintypes.LPWSTR, wintypes.UINT)
             winmm.mciGetErrorStringW(result, error, len(error))
-            raise RuntimeError(error.value or f"Không phát được âm thanh ({result}).")
+            raise WindowsMciError(result, error.value or f"Không phát được âm thanh ({result}).")
 
     def play_loop(self, path: Path) -> None:
         self.stop()

@@ -91,16 +91,24 @@ class ConfigStore:
         """Install the requested hotel MP3 mapping once, including existing OTA profiles.
 
         Subsequent custom source selections survive restarts/updates. Prepare all
-        three files before changing settings, so a missing asset cannot partly
+        MP3/PCM files before changing settings, so a missing asset cannot partly
         replace the saved choices or mark an incomplete pack as installed.
         """
-        from .audio import SOURCE_SOUND_FILES, SOURCE_SOUND_KEYS, SOURCE_SOUND_PACK, bundled_source_sound
+        from .audio import (
+            SOURCE_SOUND_FILES,
+            SOURCE_SOUND_KEYS,
+            SOURCE_SOUND_PACK,
+            bundled_source_pcm,
+            bundled_source_sound,
+        )
 
         config = self.load()
         if config.get("source_sound_pack") == SOURCE_SOUND_PACK:
             return config
         paths = {SOURCE_SOUND_KEYS[source]: str(bundled_source_sound(source, directory))
                  for source in SOURCE_SOUND_FILES}
+        for source in SOURCE_SOUND_FILES:
+            bundled_source_pcm(source, directory)
         config.update(paths)
         config["source_sound_pack"] = SOURCE_SOUND_PACK
         self.save(config)
