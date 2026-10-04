@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from .config import STATE_PATH, atomic_json_write
-from .models import BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent, booking_storage_id
+from .models import BOOKING_SOURCES, BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent, booking_storage_id
 
 STATE_SCHEMA = 5
-PARSER_STATE_VERSION = "p10"
+PARSER_STATE_VERSION = "p11"
 
 
 def _now() -> str:
@@ -279,7 +279,7 @@ class StateStore:
                 if (record.get("checkin_date") != today.isoformat()
                         or record.get("status") in {"cancelled", "modified"}
                         or not record.get("booking_id")
-                        or str(record.get("source", "Agoda")).lower() not in {"agoda", "expedia"}):
+                        or str(record.get("source", "Agoda")).lower() not in {source.lower() for source in BOOKING_SOURCES}):
                     continue
                 if any(str(record.get(field, "")).strip().lower() in placeholders for field in ("guest_name", "room_type")):
                     candidates[self._record_storage_id(record)] = dict(record)

@@ -8,7 +8,10 @@ a = Analysis(
     [str(project_dir / "app.py")],
     pathex=[str(project_dir)],
     binaries=[],
-    datas=[],
+    datas=[
+        (str(project_dir / "assets" / "sounds" / filename), "assets/sounds")
+        for filename in ("1-agoda.mp3", "2-expedia.mp3", "3-traveloka.mp3", "manifest.json")
+    ],
     hiddenimports=[
         "PIL.ImageTk",
         "pystray._win32",

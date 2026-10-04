@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.16"
+APP_VERSION = "1.7.17"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -32,6 +32,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "sound_file": "",
     "agoda_sound_file": "",
     "expedia_sound_file": "",
+    "traveloka_sound_file": "",
+    "source_sound_pack": "",
     "f92_enabled": True,
     "f92_port": "AUTO",
     "f92_sound_index": 4,
@@ -84,3 +86,22 @@ class ConfigStore:
         value = dict(DEFAULT_CONFIG)
         value.update({key: item for key, item in config.items() if key in DEFAULT_CONFIG})
         atomic_json_write(self.path, value)
+
+    def install_source_sound_pack(self, directory: Path) -> dict[str, Any]:
+        """Install the requested hotel MP3 mapping once, including existing OTA profiles.
+
+        Subsequent custom source selections survive restarts/updates. Prepare all
+        three files before changing settings, so a missing asset cannot partly
+        replace the saved choices or mark an incomplete pack as installed.
+        """
+        from .audio import SOURCE_SOUND_FILES, SOURCE_SOUND_KEYS, SOURCE_SOUND_PACK, bundled_source_sound
+
+        config = self.load()
+        if config.get("source_sound_pack") == SOURCE_SOUND_PACK:
+            return config
+        paths = {SOURCE_SOUND_KEYS[source]: str(bundled_source_sound(source, directory))
+                 for source in SOURCE_SOUND_FILES}
+        config.update(paths)
+        config["source_sound_pack"] = SOURCE_SOUND_PACK
+        self.save(config)
+        return config

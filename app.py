@@ -12,7 +12,13 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
-from booking_notifier.audio import WindowsMciAudioPlayer, configured_sound_paths, default_source_sound
+from booking_notifier.audio import (
+    SOURCE_SOUND_KEYS,
+    WindowsMciAudioPlayer,
+    bundled_source_sound,
+    configured_sound_paths,
+    default_source_sound,
+)
 from booking_notifier.config import (
     APP_DIR,
     APP_NAME,
@@ -25,7 +31,7 @@ from booking_notifier.excel_export import excel_tsv, excel_tsv_rows  # noqa: F40
 from booking_notifier.expedia_print import ExpediaPrintError, fetch_expedia_print, render_expedia_a4
 from booking_notifier.f92_device import F92Worker
 from booking_notifier.mail_monitor import ImapMonitor, is_quiet_hours, test_imap_connection
-from booking_notifier.models import BookingEvent
+from booking_notifier.models import BOOKING_SOURCES, BookingEvent
 from booking_notifier.ota_update import (
     check_for_update,
     download_update,
@@ -113,6 +119,7 @@ class BookingNotifierApp:
         "danger": "#C95B5B",
         "agoda": "#D94A43",
         "expedia": "#2563A9",
+        "traveloka": "#08869B",
         "header_text": "#F7F2E8",
     }
 
@@ -124,6 +131,11 @@ class BookingNotifierApp:
         self.root.configure(bg=self.COLORS["bg"])
         self.config_store = ConfigStore()
         self.config = self.config_store.load()
+        if os.name == "nt":
+            try:
+                self.config = self.config_store.install_source_sound_pack(APP_DIR / "sounds")
+            except Exception:
+                LOGGER.exception("Cannot install bundled MP3 pack; preserve settings and keep fallback audio")
         self.state = StateStore()
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.tray = SystemTray(self.events)
@@ -288,7 +300,7 @@ class BookingNotifierApp:
             font=("Segoe UI Semibold", 21),
         ).pack(anchor="w")
         tk.Label(
-            brand_text, text="Agoda + Expedia  •  Chỉ báo khách đến hôm nay",
+            brand_text, text="Agoda + Expedia + Traveloka  •  Chỉ báo khách đến hôm nay",
             bg=self.COLORS["primary"], fg="#BFC9D8", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(3, 0))
 
@@ -453,7 +465,7 @@ class BookingNotifierApp:
         self.poll_var = tk.StringVar()
         self.scan_days_var = tk.StringVar()
         self.sound_var = tk.StringVar()
-        self.source_sound_vars = {source: tk.StringVar() for source in ("Agoda", "Expedia")}
+        self.source_sound_vars = {source: tk.StringVar() for source in BOOKING_SOURCES}
         self.quiet_var = tk.BooleanVar()
         self.start_windows_var = tk.BooleanVar()
         self.start_minimized_var = tk.BooleanVar()
@@ -520,7 +532,7 @@ class BookingNotifierApp:
             preview = ttk.Button(row, text=f"Nghe thử {source}", command=lambda s=source: self.preview_source_sound(s), style="Secondary.TButton")
             preview.pack(side="left", padx=(8, 0))
             self.sound_preview_buttons[source] = preview
-        ttk.Label(sounds, text="Để trống: dùng âm thanh chung bên dưới; nếu không có, dùng chuông riêng mặc định.\nAgoda: 2 nốt cao. Expedia: 3 nốt trầm hơn. Nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(sounds, text="Đã tích hợp: Agoda → 1-agoda.mp3; Expedia → 2-expedia.mp3; Traveloka → 3-traveloka.mp3.\nĐể trống: dùng tệp tích hợp đúng nguồn. Có thể chọn tệp riêng; nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(0, 12))
         ttk.Label(sounds, text="Âm thanh chung dự phòng (giữ cấu hình cũ)", style="Field.TLabel").pack(anchor="w", pady=(0, 5))
         common = ttk.Frame(sounds, style="Card.TFrame")
         common.pack(fill="x")
@@ -634,6 +646,7 @@ class BookingNotifierApp:
             "poll_seconds": min(3600, max(30, int(self.poll_var.get()))),
             "scan_days": min(365, max(1, int(self.scan_days_var.get()))),
             "sound_file": self.sound_var.get().strip(),
+            "source_sound_pack": str(self.config.get("source_sound_pack", "")),
             **{f"{source.lower()}_sound_file": variable.get().strip() for source, variable in self.source_sound_vars.items()},
             "quiet_hours_enabled": self.quiet_var.get(),
             "start_with_windows": self.start_windows_var.get(),
@@ -1028,7 +1041,7 @@ class BookingNotifierApp:
         popup.resizable(False, False)
         popup.attributes("-topmost", True)
         popup.configure(bg=self.COLORS["surface"])
-        accent = self.COLORS["expedia"] if alert.source == "Expedia" else self.COLORS["agoda"]
+        accent = self.COLORS.get(alert.source.strip().lower(), self.COLORS["agoda"])
 
         hero = tk.Frame(popup, bg=self.COLORS["primary"], height=118)
         hero.pack(fill="x")
@@ -1169,11 +1182,18 @@ class BookingNotifierApp:
                     self.log(f"Không phát được tệp âm thanh {source}; đang thử âm thanh dự phòng.")
                     return False
 
-            for path in configured_sound_paths(config, source):
+            source_config = {**config, "sound_file": ""}
+            candidates = configured_sound_paths(source_config, source)
+            try:
+                candidates.append(bundled_source_sound(source, APP_DIR / "sounds"))
+            except Exception:
+                LOGGER.exception("Cannot prepare bundled %s MP3; continue with fallback audio", source)
+            candidates.extend(configured_sound_paths({"sound_file": config.get("sound_file", "")}, source))
+            for path in dict.fromkeys(candidates):
                 if play_file(path):
                     self.sound_uses_file = True
                     break
-            if not self.sound_uses_file and source.strip().lower() in {"agoda", "expedia"}:
+            if not self.sound_uses_file and source.strip().lower() in SOURCE_SOUND_KEYS:
                 try:
                     self.sound_uses_file = play_file(default_source_sound(source, APP_DIR / "sounds"))
                 except Exception:

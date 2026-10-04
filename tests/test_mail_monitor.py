@@ -678,7 +678,7 @@ def test_bilingual_parser_upgrade_repairs_yesterdays_history_without_popup(tmp_p
     assert state.history()[0]["room_type"] == "Bunk Bed in Mixed Dormitory Room x1"
     assert not any(kind in {"alert", "deferred_alert", "booking_cancelled", "booking_modified"} for kind, _ in events.queue)
     assert not state.data["pending_alerts"]
-    assert state.mailbox_parser_version(mailbox_key) == "p10"
+    assert state.mailbox_parser_version(mailbox_key) == mail_monitor.PARSER_STATE_VERSION
     fetched.clear()
     monitor.scan_mailbox()
     assert fetched == []

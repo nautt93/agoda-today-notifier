@@ -6,8 +6,9 @@ import unicodedata
 from collections import OrderedDict
 from collections.abc import Iterable, Sequence
 from datetime import date
+from email.headerregistry import HeaderRegistry
 from email.message import Message
-from email.utils import parseaddr, parsedate_to_datetime
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 
 from .models import (
@@ -20,6 +21,7 @@ from .models import (
 TRUSTED_DOMAINS = {
     "Agoda": ("agoda.com", "agoda.net"),
     "Expedia": ("expedia.com", "expediagroup.com", "expediapartnercentral.com"),
+    "Traveloka": ("traveloka.com",),
 }
 
 CHECKIN_LABELS = (
@@ -95,6 +97,13 @@ AGODA_REVENUE_LABELS = (
     "Tổng tiền phòng",
     "Tổng tiền",
 )
+TRAVELOKA_REVENUE_LABELS = (
+    # The rate grid/subtotal may precede a promotion or rounding adjustment.
+    # Only the explicit hotel payout is the amount that the property receives.
+    "Total you will receive",
+    "Amount Payable to Property",
+    "Amount Traveloka Will Pay You",
+)
 
 FIRST_NAME_LABELS = (
     "customer first name", "guest first name", "traveler first name", "first name", "given name", "tên khách hàng",
@@ -106,6 +115,7 @@ FIELD_LABELS = (
     GUEST_LABELS + FIRST_NAME_LABELS + LAST_NAME_LABELS + ROOM_LABELS + ROOM_COUNT_LABELS
     + CHECKIN_LABELS + CHECKOUT_LABELS + CONFIRMATION_LABELS + PAYMENT_MODEL_LABELS
     + AGODA_REVENUE_LABELS + EXPEDIA_COLLECT_REVENUE_LABELS + PROPERTY_COLLECT_REVENUE_LABELS
+    + TRAVELOKA_REVENUE_LABELS
     + ("booking id", "agoda booking id", "itinerary id", "customer info", "phone", "telephone", "tel",
        "email", "address", "country", "country of residence", "country region of residence", "nationality",
        "special requests", "remarks", "meal plan", "rate plan", "cancellation policy", "payment instructions",
@@ -113,6 +123,8 @@ FIELD_LABELS = (
        "adults", "children", "number of guests", "occupancy", "thank you", "important information",
        "số người", "no. of extra bed", "no of extra bed", "số giường thêm", "tên chính sách giá",
        "other guests", "khách khác", "yêu cầu đặc biệt", "quốc gia cư trú")
+    + ("room information", "guest information", "extra bed information", "guest email",
+       "subtotal rates", "promotion and rounding adjustment", "booked and payable by")
 )
 
 MONTHS = {
@@ -269,8 +281,25 @@ def message_table_rows(message: Message) -> list[list[str]]:
 
 
 def sender_source(sender: str) -> str:
-    address = parseaddr(sender)[1].lower().strip()
-    domain = address.rsplit("@", 1)[-1] if "@" in address else ""
+    # parseaddr() can accept the first address in a malformed/ambiguous header on
+    # older Python versions. The From header must identify one actual mailbox;
+    # an address appearing in a display name never grants provider trust.
+    if getattr(sender, "defects", ()):
+        return ""
+    raw = re.sub(r"\r?\n[ \t]+", " ", str(sender)).strip()
+    if "\r" in raw or "\n" in raw:
+        return ""
+    try:
+        header = HeaderRegistry()("From", raw)
+        if (header.defects or len(header.addresses) != 1
+                or any(group.display_name is not None for group in header.groups)):
+            return ""
+        mailbox = header.addresses[0]
+        if not mailbox.username or not mailbox.domain:
+            return ""
+        domain = mailbox.domain.lower()
+    except (ValueError, IndexError, TypeError):
+        return ""
     for source, roots in TRUSTED_DOMAINS.items():
         if any(domain == root or domain.endswith("." + root) for root in roots):
             return source
@@ -732,7 +761,54 @@ def _expedia_rooms_from_stay_grid(rows: Sequence[Sequence[str]]) -> int | None:
     return None
 
 
+def _traveloka_room_information(text: str, rows: Sequence[Sequence[str]]) -> str:
+    """Read Traveloka's `(2 × ) Room Name` grid, not its guest/extra-bed counts."""
+    allocation_pattern = re.compile(r"\s*\(?\s*(\d{1,3})\s*[x×]\s*\)?\s*(.+?)\s*", re.IGNORECASE)
+    allocations: OrderedDict[str, tuple[str, int]] = OrderedDict()
+
+    def add_allocation(value: str) -> bool:
+        match = allocation_pattern.fullmatch(value)
+        if not match:
+            return False
+        count = _parse_room_count(match.group(1))
+        room = clean_room_type(match.group(2))
+        if count is None or not room:
+            return False
+        key = normalized(room)
+        old = allocations.get(key, (room, 0))
+        allocations[key] = (old[0], old[1] + count)
+        return True
+
+    for header_index, header in enumerate(rows):
+        room_column = _header_index(header, ("room information",))
+        if room_column is None:
+            continue
+        for row in rows[header_index + 1:header_index + 101]:
+            if room_column >= len(row) or not add_allocation(row[room_column]):
+                break
+    if allocations:
+        return _format_room_allocations(allocations, include_single=True)
+
+    # The original plain alternative also stacks these three grid headings.
+    # Scan only the immediate grid section, never a rate grid further below.
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        if not _matches_label(line, ("room information",)):
+            continue
+        for candidate in lines[index + 1:index + 13]:
+            if not candidate.strip() or _matches_label(candidate, ("guest information", "extra bed information")):
+                continue
+            if add_allocation(candidate):
+                continue
+            break
+    return _format_room_allocations(allocations, include_single=True)
+
+
 def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> str:
+    if source == "Traveloka":
+        traveloka_rooms = _traveloka_room_information(text, rows)
+        if traveloka_rooms:
+            return traveloka_rooms
     summary = _room_summary(text)
     if summary:
         return summary
@@ -881,6 +957,8 @@ def extract_payment_model(text: str, rows: Sequence[Sequence[str]]) -> str:
 
 
 def extract_revenue(text: str, rows: Sequence[Sequence[str]], source: str) -> str:
+    if source == "Traveloka":
+        return _labeled_money(text, rows, TRAVELOKA_REVENUE_LABELS)
     if source != "Expedia":
         return _labeled_money(text, rows, AGODA_REVENUE_LABELS)
     model = extract_payment_model(text, rows)
@@ -898,10 +976,13 @@ def extract_revenue(text: str, rows: Sequence[Sequence[str]], source: str) -> st
 
 def parse_booking_message(message: Message) -> BookingEvent | None:
     subject = str(message.get("Subject", ""))
-    sender = str(message.get("From", ""))
-    source = sender_source(sender)
+    if len(message.get_all("From", [])) != 1:
+        return None
+    sender_header = message.get("From", "")
+    source = sender_source(sender_header)
     if not source:
         return None
+    sender = str(sender_header)
     body = message_body_text(message)
     rows = message_table_rows(message)
     status = _event_status(subject, body, source)
@@ -919,7 +1000,12 @@ def parse_booking_message(message: Message) -> BookingEvent | None:
             "xac nhan dat phong", "dat phong moi", "thong bao dat phong",
         )
         agoda_terms = ("booking", "reservation", "confirmation", "dat phong", "xac nhan")
-        terms = agoda_terms if source == "Agoda" else booking_terms
+        if source == "Agoda":
+            terms = agoda_terms
+        elif source == "Traveloka":
+            terms = booking_terms + ("confirmed - traveloka itinerary id",)
+        else:
+            terms = booking_terms
         if not checkin or not any(term in searchable for term in terms):
             return None
     received_at = str(message.get("Date", ""))

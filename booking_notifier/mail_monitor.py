@@ -84,13 +84,13 @@ class ImapMonitor(threading.Thread):
         self.event_queue.put((event_type, payload))
 
     def run(self) -> None:
-        self.emit("status", "Đang theo dõi email Agoda + Expedia")
+        self.emit("status", "Đang theo dõi email Agoda + Expedia + Traveloka")
         while not self.stop_event.is_set():
             try:
                 processed = self.scan_mailbox()
                 if processed:
                     self.emit("log", f"Đã đọc {processed} email mới.")
-                self.emit("status", "Đang theo dõi email Agoda + Expedia")
+                self.emit("status", "Đang theo dõi email Agoda + Expedia + Traveloka")
             except Exception as exc:
                 LOGGER.exception("IMAP scan failed")
                 self.emit("error", friendly_error(exc))
@@ -108,7 +108,7 @@ class ImapMonitor(threading.Thread):
         failed_count = 0
         today_count = 0
         other_day_count = 0
-        self.emit("status", "Đang kiểm tra thư mới nhất Agoda + Expedia…")
+        self.emit("status", "Đang kiểm tra thư mới nhất Agoda + Expedia + Traveloka…")
         if self.repair_requested.is_set():
             self.detail_repair_attempts.clear()
             self.repair_requested.clear()
@@ -157,7 +157,7 @@ class ImapMonitor(threading.Thread):
                     raise RuntimeError("Không đọc được thư gần nhất để bổ sung tên khách/hạng phòng.")
                 recent_uids = sorted({int(uid) for uid in recent_data[0].split()})[-RECENT_MESSAGE_LIMIT:]
                 uids = sorted(set(uids) | set(recent_uids))
-                self.emit("log", f"Nâng cấp parser: bổ sung tên khách/hạng phòng từ tối đa {RECENT_MESSAGE_LIMIT} thư gần nhất; không báo lặp.")
+                self.emit("log", f"Nâng cấp parser: kiểm tra nguồn mới và bổ sung tên khách/hạng phòng từ tối đa {RECENT_MESSAGE_LIMIT} thư gần nhất; không báo lặp booking đã đóng.")
             # Preserve both the old cursor and unfinished batch during the 1.7.5 migration.
             work = sorted(set(uids) | set(position[1] if position else []))
             pending = self.state.stage_mailbox_reads(
@@ -195,7 +195,7 @@ class ImapMonitor(threading.Thread):
                     continue
                 try:
                     message = message_from_bytes(raw, policy=policy.default)
-                    sender = str(message.get("From", ""))
+                    sender = message.get("From", "")
                     message_id = str(message.get("Message-ID", "")).strip()
                 except Exception:
                     failed_count += 1
@@ -209,7 +209,7 @@ class ImapMonitor(threading.Thread):
                     self.state.remember_processed_aliases(uid_key)
                     self.state.finish_mailbox_read(mailbox_key, uid_number)
                     continue
-                if not is_trusted_booking_sender(sender):
+                if len(message.get_all("From", [])) != 1 or not is_trusted_booking_sender(sender):
                     self.state.remember_processed_aliases(uid_key, message_key)
                     self.state.finish_mailbox_read(mailbox_key, uid_number)
                     processed_count += 1
@@ -299,7 +299,7 @@ class ImapMonitor(threading.Thread):
                     if not raw:
                         continue
                     message = message_from_bytes(raw, policy=policy.default)
-                    if not is_trusted_booking_sender(str(message.get("From", ""))):
+                    if not is_trusted_booking_sender(message.get("From", "")):
                         continue
                     event = parse_booking_message(message)
                     if (event is None or event.status != BOOKING_STATUS_NEW

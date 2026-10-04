@@ -34,6 +34,14 @@ def test_numeric_booking_id_and_legacy_lowercase_provider():
     assert event.storage_id == "expedia:1234567890"
 
 
+def test_traveloka_source_is_canonical_and_keeps_separate_booking_identity():
+    traveloka = BookingEvent.from_dict({"source": "traveloka", "booking_id": 12345678901234})
+    assert traveloka.source == "Traveloka" and traveloka.booking_id == "12345678901234"
+    assert traveloka.storage_id == "traveloka:12345678901234"
+    assert traveloka.storage_id != BookingEvent(source="Agoda", booking_id=traveloka.booking_id).storage_id
+    assert traveloka.storage_id != BookingEvent(source="Expedia", booking_id=traveloka.booking_id).storage_id
+
+
 def test_identity_lookup_does_not_parse_unrelated_old_dates():
     record = {"source": "Agoda", "subject": "Old history", "checkin_date": "30/09/2026"}
     assert booking_storage_id(record).startswith("agoda:alert:")

@@ -41,6 +41,15 @@ def test_agoda_exact_legacy_layout():
     assert excel_tsv(alert).endswith("\tAgoda Deluxe King")
 
 
+def test_traveloka_keeps_legacy_excel_layout_with_own_source_and_room_quantity():
+    alert = booking("12345678901234", "NGUYỄN VĂN AN")
+    alert.source = "Traveloka"
+    alert.room_type = "Superior Double Room x2"
+    assert excel_tsv(alert) == "\tNGUYỄN VĂN AN\t30\t2\t2\t1800000\t\t\tTraveloka Superior Double Room x2"
+    alert.room_type = "Traveloka Superior Double Room x2"
+    assert excel_tsv(alert).endswith("\tTraveloka Superior Double Room x2")
+
+
 def test_excel_whitespace_and_missing_fields():
     alert = booking("123", "  \t=SUM(1)\n ")
     alert.checkout_date = None

@@ -1,15 +1,32 @@
-"""Source-specific sound selection, built-in chimes, and Windows MP3 playback."""
+"""Source-specific bundled MP3s, fallback chimes, and Windows playback."""
 
+import hashlib
 import math
 import os
 import struct
+import sys
 import tempfile
 import wave
 from pathlib import Path
 from typing import Any
 
-SOURCE_SOUND_KEYS = {"agoda": "agoda_sound_file", "expedia": "expedia_sound_file"}
-CHIME_NOTES = {"agoda": (659.25, 880.0), "expedia": (523.25, 659.25, 783.99)}
+SOURCE_SOUND_KEYS = {
+    "agoda": "agoda_sound_file",
+    "expedia": "expedia_sound_file",
+    "traveloka": "traveloka_sound_file",
+}
+SOURCE_SOUND_FILES = {"agoda": "1-agoda.mp3", "expedia": "2-expedia.mp3", "traveloka": "3-traveloka.mp3"}
+SOURCE_SOUND_PACK = "hotel-mp3-v1"
+SOURCE_SOUND_SHA256 = {
+    "agoda": "3fa61f373996074a05dc1851d96510dea3081df922e3efd17a9910582ed920c9",
+    "expedia": "5badf83c9b0dbccf032f49d16d8d510693f2d55084cf7a7086ff55b277bffb69",
+    "traveloka": "dbd9535a22f4f6f48952f3598048b213923818dc633b45d28813e4577015762e",
+}
+CHIME_NOTES = {
+    "agoda": (659.25, 880.0),
+    "expedia": (523.25, 659.25, 783.99),
+    "traveloka": (783.99, 659.25, 523.25),
+}
 SAMPLE_RATE = 22050
 
 
@@ -26,8 +43,46 @@ def configured_sound_paths(config: dict[str, Any], source: str) -> list[Path]:
     return paths
 
 
+def bundled_source_sound(source: str, directory: Path) -> Path:
+    """Install the exact supplied MP3 atomically in writable app data.
+
+    PyInstaller's temporary extraction folder is read-only input: playback uses
+    the stable app-data copy, which remains available when the EXE is updated.
+    Existing intact copies are reused; damaged copies are repaired from the
+    verified package, never by silently using another provider's file.
+    """
+    key = source.strip().lower()
+    filename = SOURCE_SOUND_FILES.get(key)
+    if filename is None:
+        raise ValueError("Nguồn booking chưa có tệp âm thanh đi kèm.")
+    bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    data = (bundle_root / "assets" / "sounds" / filename).read_bytes()
+    expected_hash = SOURCE_SOUND_SHA256[key]
+    if hashlib.sha256(data).hexdigest() != expected_hash:
+        raise ValueError(f"Tệp âm thanh đi kèm {source.strip()} không hợp lệ.")
+    directory = Path(directory)
+    path = directory / filename
+    try:
+        if hashlib.sha256(path.read_bytes()).hexdigest() == expected_hash:
+            return path
+    except OSError:
+        pass
+    directory.mkdir(parents=True, exist_ok=True)
+    descriptor, name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=directory)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
 def default_source_sound(source: str, directory: Path) -> Path:
-    """Create our own two distinct PCM WAV files in writable app data, not beside the EXE."""
+    """Create distinct fallback PCM WAVs in writable app data, not beside the EXE."""
     key = source.strip().lower()
     notes = CHIME_NOTES.get(key)
     if notes is None:

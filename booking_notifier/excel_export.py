@@ -2,7 +2,7 @@
 
 import re
 
-from booking_notifier.models import BookingEvent
+from booking_notifier.models import BOOKING_SOURCES, BookingEvent
 from booking_notifier.parsing import normalized
 
 
@@ -36,7 +36,7 @@ def excel_amount_value(value: str) -> str:
 
 
 def excel_tsv(alert: BookingEvent) -> str:
-    source = "Expedia" if alert.source.strip().lower() == "expedia" else "Agoda"
+    source = {provider.lower(): provider for provider in BOOKING_SOURCES}.get(alert.source.strip().lower(), "Agoda")
     room_note = sanitize_excel_cell(alert.room_type, protect_formula=False)
     room_normalized = normalized(room_note)
     if room_normalized != source.lower() and not room_normalized.startswith(source.lower() + " "):

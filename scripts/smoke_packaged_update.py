@@ -86,9 +86,20 @@ def main() -> None:
                     for sound_file in sounds:
                         with wave.open(str(sound_file), "rb") as sound:
                             assert sound.getnframes() == sound.getframerate() * 3
+                    installed_config = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
+                    assert installed_config["source_sound_pack"] == "hotel-mp3-v1"
+                    supplied = ("1-agoda.mp3", "2-expedia.mp3", "3-traveloka.mp3")
+                    hashes = set()
+                    for source, filename in zip(("agoda", "expedia", "traveloka"), supplied, strict=True):
+                        copied = config_dir / "sounds" / filename
+                        assert installed_config[f"{source}_sound_file"] == str(copied)
+                        assert digest(copied) == digest(project / "assets" / "sounds" / filename)
+                        hashes.add(digest(copied))
+                    assert len(hashes) == 3, "All three supplied source files must be distinct"
                     print("PASS: frozen updater handoff, EXE replacement, real Tk UI startup confirmed.", flush=True)
                     print("PASS: packaged Windows tray backend starts successfully.", flush=True)
                     print("PASS: packaged app creates two distinct provider WAV files in user data.", flush=True)
+                    print("PASS: all three exact supplied MP3s are bundled, migrated and source-mapped in user data.", flush=True)
                     print("PASS: legacy missing-ID popup restores; history and ten unfinished email UIDs preserved.", flush=True)
                     return
                 time.sleep(0.25)

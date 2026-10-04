@@ -8,6 +8,7 @@ from typing import Any
 BOOKING_STATUS_NEW = "new"
 BOOKING_STATUS_MODIFIED = "modified"
 BOOKING_STATUS_CANCELLED = "cancelled"
+BOOKING_SOURCES = ("Agoda", "Expedia", "Traveloka")
 
 
 def booking_storage_id(record: dict[str, Any]) -> str:
@@ -65,7 +66,7 @@ class BookingEvent:
         data = dict(value)
         # 1.5.x records may omit the source/ID; JSON exports may have numeric IDs.
         source = str(data.get("source") or "Agoda")
-        data["source"] = {"agoda": "Agoda", "expedia": "Expedia"}.get(source.lower(), source)
+        data["source"] = {provider.lower(): provider for provider in BOOKING_SOURCES}.get(source.lower(), source)
         data["booking_id"] = str(data.get("booking_id") or "")
         for field in ("checkin_date", "checkout_date"):
             raw = data.get(field)
