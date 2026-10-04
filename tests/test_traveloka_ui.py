@@ -120,8 +120,10 @@ def test_traveloka_popup_tray_copy_close_and_queued_provider_mp3s(tmp_path, monk
             assert send.call_args.args == (f"play {WindowsMciAudioPlayer.ALIAS} repeat",)
             buttons = list(child for child in descendants(app.active_popup) if isinstance(child, ttk.Button))
             if event.source == "Traveloka":
-                assert len(buttons) == 2 and not any(button.winfo_name() == "print_expedia" for button in buttons)
-                assert app.active_menu.index("end") == 0
+                assert len(buttons) == 3 and not any(button.winfo_name() == "print_expedia" for button in buttons)
+                traveloka_print = next(button for button in buttons if button.winfo_name() == "print_traveloka")
+                assert traveloka_print.cget("text") == "In phiếu Traveloka - 1 trang A4"
+                assert app.active_menu.index("end") == 1
             copy, close = large_actions(app.active_popup)
             copy.invoke()
             assert root.clipboard_get() == excel_tsv(event)
@@ -148,7 +150,8 @@ def test_traveloka_popup_tray_copy_close_and_queued_provider_mp3s(tmp_path, monk
         monkeypatch.setattr(app.history_menu, "tk_popup", Mock())
         monkeypatch.setattr(app.history_menu, "grab_release", Mock())
         app.show_history_context_menu(SimpleNamespace(y=app.history_tree.bbox(row)[1] + 8, x_root=50, y_root=50))
-        assert app.history_menu.index("end") == 0
+        assert app.history_menu.index("end") == 1
         assert app.history_menu.entrycget(0, "label") == "Sao chép dòng đã chọn sang Excel"
+        assert app.history_menu.entrycget(1, "label") == "In phiếu Traveloka - 1 trang A4"
     finally:
         app.exit_app()

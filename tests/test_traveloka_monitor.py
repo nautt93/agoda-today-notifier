@@ -148,6 +148,39 @@ def test_traveloka_first_start_reads_only_latest_twenty_and_incremental_new_uid(
     assert monitor.scan_mailbox() == 0 and fetched == []
 
 
+def test_traveloka_payment_receipt_finishes_once_without_popup_or_infinite_retry(tmp_path, monkeypatch):
+    message = message_from_bytes(traveloka_email(), policy=policy.default)
+    message.replace_header("Subject", "PAYMENT COMPLETED - Payment ID 1779000000000001")
+    fetched, _ = fake_inbox(monkeypatch, {1: message.as_bytes()})
+    monitor, state, events = make_monitor(tmp_path)
+    assert monitor.scan_mailbox() == 1 and fetched == [1]
+    assert not emitted_alerts(events) and not state.pending_for_date(date.today())
+    key = f"incremental:v1:{monitor.identity_hash}:123"
+    assert state.mailbox_read_position(key) == (1, [])
+    assert not state.data["parse_failures"]
+    fetched.clear()
+    assert monitor.scan_mailbox() == 0 and fetched == []
+
+
+def test_p11_upgrade_refreshes_known_booking_without_reopening_or_resetting_cursor(tmp_path, monkeypatch):
+    monitor, state, events = make_monitor(tmp_path)
+    booking = BookingEvent(source="Traveloka", booking_id="20261234000001", checkin_date=date.today(),
+                           guest_name="Legacy Short", room_type="Old Room x2")
+    state.acknowledge(state.register_today_confirmation(booking, ("old-mail",), date.today()))
+    key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(key, [], minimum_cursor=100, parser_version="p11")
+    state.remember_processed_aliases(f"uid:p11:{monitor.identity_hash}:123:1")
+    fetched, _ = fake_inbox(monkeypatch, {1: traveloka_email()})
+    assert monitor.scan_mailbox() == 1 and fetched == [1]
+    assert state.history()[0]["guest_name"] == "Synthetic Full Guest"
+    assert state.history()[0]["room_type"] == "Deluxe Double Room x2"
+    assert state.mailbox_read_position(key) == (100, [])
+    assert state.mailbox_parser_version(key) == mail_monitor.PARSER_STATE_VERSION
+    assert not emitted_alerts(events) and not state.pending_for_date(date.today())
+    fetched.clear()
+    assert monitor.scan_mailbox() == 0 and fetched == []
+
+
 @pytest.mark.parametrize("has_message_id", [True, False])
 def test_traveloka_resends_stay_deduplicated_after_close_restart_and_uidvalidity_change(tmp_path, monkeypatch, has_message_id):
     messages = {1: traveloka_email(copy=1, message_id=has_message_id),
@@ -242,7 +275,7 @@ def test_p10_upgrade_recognizes_previous_traveloka_only_today_and_preserves_curs
     state.acknowledge(state.register_today_confirmation(known, ("old-confirmation",), date.today()))
     old_history = state.history()
     message_id = str(message_from_bytes(messages[12], policy=policy.default)["Message-ID"])
-    # p10 marked unknown Traveloka as processed. p11 must reconsider only recent bodies.
+    # The older parser marked unknown Traveloka as processed; retry only recent bodies.
     state.remember_processed_aliases(f"uid:p10:{monitor.identity_hash}:123:12",
                                     f"msg:p10:{monitor.identity_hash}:{hashlib.sha256(message_id.encode()).hexdigest()}")
     key = f"incremental:v1:{monitor.identity_hash}:123"

@@ -31,7 +31,7 @@ jobs:
           name: windows-popup-previews
           path: |
             ${{ runner.temp }}/booking-popup-previews/*.png
-            ${{ runner.temp }}/booking-popup-previews/synthetic-expedia-printed-a4.pdf
+            ${{ runner.temp }}/booking-popup-previews/synthetic-*-printed-a4.pdf
           if-no-files-found: warn
           retention-days: 7
 
@@ -78,7 +78,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Thêm Traveloka cùng cơ chế Agoda/Expedia: chỉ báo xác nhận mới check-in hôm nay, đủ tên/hạng phòng/số phòng, nguồn và ghi chú Excel là Traveloka. Tích hợp nguyên bản 1-agoda.mp3, 2-expedia.mp3 và 3-traveloka.mp3; lần cập nhật này tự gắn đúng âm theo nguồn, sau đó giữ lựa chọn riêng. MP3 đi kèm EXE, dùng được trên máy khác không cần chép tay. Giữ chống trùng, popup khi ẩn khay, 9 cột Excel, in Expedia A4, F92, cấu hình/email/mật khẩu và mốc UID. Nâng parser chỉ đọc lại tối đa 20 thư gần nhất một lần để nhận Traveloka đã đến; không quét toàn bộ hộp thư hoặc báo lại booking đã đóng. Đã kiểm tra mẫu Traveloka, nội dung 3 MP3, đường âm theo nguồn, popup Windows và cập nhật EXE thực tế." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Thêm in Traveloka 1 trang A4 tương tự Expedia: nút In trong popup và menu chuột phải, đủ thông tin khách/phòng/thanh toán cùng các trường thẻ thực sự có trong email. Không tự tạo số thẻ/CVV khi email không có. Phiếu chỉ xử lý trong bộ nhớ; xem trước và in không xác nhận booking, không ngắt âm thanh hay theo dõi thư. Giữ 3 âm thanh Agoda/Expedia/Traveloka đi kèm EXE, cơ chế chỉ booking mới check-in hôm nay, chống trùng, Excel 9 cột, F92, cấu hình, lịch sử và mốc UID. Đã kiểm tra bản in A4 Windows và cập nhật EXE thực tế." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

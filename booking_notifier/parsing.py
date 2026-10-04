@@ -111,11 +111,20 @@ FIRST_NAME_LABELS = (
 LAST_NAME_LABELS = (
     "customer last name", "guest last name", "traveler last name", "last name", "surname", "family name", "họ khách hàng",
 )
+CARD_FIELD_LABELS = (
+    "card holder name", "cardholder name", "card number", "credit card number",
+    "virtual card number", "virtual credit card", "virtual credit card number",
+    "vcc number", "valid until", "expiration date", "expiry date", "activation date",
+    "validation code", "cvv", "cvc", "cvv/cvc", "security code", "card security code",
+    "billing details", "billing address", "vcc amount", "card amount", "vcc status", "card status",
+    "payment id", "payment status",
+)
 FIELD_LABELS = (
     GUEST_LABELS + FIRST_NAME_LABELS + LAST_NAME_LABELS + ROOM_LABELS + ROOM_COUNT_LABELS
     + CHECKIN_LABELS + CHECKOUT_LABELS + CONFIRMATION_LABELS + PAYMENT_MODEL_LABELS
     + AGODA_REVENUE_LABELS + EXPEDIA_COLLECT_REVENUE_LABELS + PROPERTY_COLLECT_REVENUE_LABELS
     + TRAVELOKA_REVENUE_LABELS
+    + CARD_FIELD_LABELS
     + ("booking id", "agoda booking id", "itinerary id", "customer info", "phone", "telephone", "tel",
        "email", "address", "country", "country of residence", "country region of residence", "nationality",
        "special requests", "remarks", "meal plan", "rate plan", "cancellation policy", "payment instructions",
@@ -304,6 +313,17 @@ def sender_source(sender: str) -> str:
         if any(domain == root or domain.endswith("." + root) for root in roots):
             return source
     return ""
+
+
+def is_traveloka_payment_notice(message: Message) -> bool:
+    return (
+        len(message.get_all("From", [])) == 1
+        and sender_source(message.get("From", "")) == "Traveloka"
+        and bool(re.search(
+            r"\bpayment\s+(?:completed|id|received|processed|successful)\b",
+            normalized(message.get("Subject", "")),
+        ))
+    )
 
 
 def _event_status(subject: str, body: str, source: str = "") -> str:
@@ -981,6 +1001,10 @@ def parse_booking_message(message: Message) -> BookingEvent | None:
     sender_header = message.get("From", "")
     source = sender_source(sender_header)
     if not source:
+        return None
+    if is_traveloka_payment_notice(message):
+        # Payment receipts may quote confirmation text and a stay/guest/VCC.
+        # They enrich an explicitly requested printout, never create an alert.
         return None
     sender = str(sender_header)
     body = message_body_text(message)

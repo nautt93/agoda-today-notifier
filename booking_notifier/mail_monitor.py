@@ -14,7 +14,7 @@ from email import message_from_bytes, policy
 from typing import Any
 
 from .models import BOOKING_STATUS_NEW
-from .parsing import is_trusted_booking_sender, parse_booking_message
+from .parsing import is_traveloka_payment_notice, is_trusted_booking_sender, parse_booking_message
 from .state import PARSER_STATE_VERSION, StateStore
 
 LOGGER = logging.getLogger(__name__)
@@ -210,6 +210,13 @@ class ImapMonitor(threading.Thread):
                     self.state.finish_mailbox_read(mailbox_key, uid_number)
                     continue
                 if len(message.get_all("From", [])) != 1 or not is_trusted_booking_sender(sender):
+                    self.state.remember_processed_aliases(uid_key, message_key)
+                    self.state.finish_mailbox_read(mailbox_key, uid_number)
+                    processed_count += 1
+                    continue
+                if is_traveloka_payment_notice(message):
+                    # A recognized receipt is not a failed booking template.
+                    # Finish once, so it cannot become a popup or be retried forever.
                     self.state.remember_processed_aliases(uid_key, message_key)
                     self.state.finish_mailbox_read(mailbox_key, uid_number)
                     processed_count += 1

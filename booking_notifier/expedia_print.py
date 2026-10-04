@@ -258,9 +258,25 @@ def _font(points: float, bold: bool = False, font_path: str | None = None) -> Im
     raise ExpediaPrintError("Không có font Unicode để in đầy đủ tên khách.")
 
 
-def render_expedia_a4(data: ExpediaPrintData, font_path: str | None = None) -> Image.Image:
+def is_explicitly_charged(status: str) -> bool:
+    """Interpret only exact positive payment/card statements, never negations."""
+    value = normalized(status)
+    return value in {"charged", "payment completed", "paid"} or bool(re.fullmatch(
+        r"(?:vcc|card|virtual credit card) (?:has been|was|is) charged", value,
+    ))
+
+
+def render_booking_a4(data: ExpediaPrintData, font_path: str | None = None) -> Image.Image:
     """Exactly one 300-dpi A4 bitmap, in memory only; never silently clip fields."""
-    if len(str(data.fields.values())) + sum(len(str(room.fields.values())) for room in data.rooms) > 18000:
+    source = data.booking.source
+    payment_completed = data.fields.get("payment_completed") == "true"
+    payable_label = f"Đã thanh toán {source}" if payment_completed else f"Thu {source}"
+    charged_cards = [is_explicitly_charged(card.fields.get("status", "")) for card in data.cards]
+    if source not in {"Expedia", "Traveloka"}:
+        raise ExpediaPrintError("Nguồn booking chưa hỗ trợ phiếu in A4.")
+    if (len(data.booking.guest_name or "") + len(data.booking.booking_id or "") + len(data.booking.total_revenue or "")
+            + len(str(data.fields.values())) + sum(len(str(room.fields.values())) for room in data.rooms)
+            + sum(len(str(card.fields.values())) + len(str(card.rooms)) for card in data.cards) > 18000):
         raise ExpediaPrintError("Thông tin quá dài để vừa một trang A4. Không in thiếu phòng/thẻ; hãy kiểm tra email gốc.")
     scale = 300 / 72
     left, right = 36 * scale, 559 * scale
@@ -310,53 +326,84 @@ def render_expedia_a4(data: ExpediaPrintData, font_path: str | None = None) -> I
                 write("   |   ".join(parts))
 
         booking = data.booking
-        write("EXPEDIA / PHIẾU ĐẶT PHÒNG", 19, True, gap=1)
+        title = "PHIẾU THANH TOÁN" if payment_completed else "PHIẾU ĐẶT PHÒNG"
+        write(f"{source.upper()} / {title}", 19, True, gap=1)
         write(data.fields.get("hotel", "Booking Desk"), 10, gap=10)
         write(booking.guest_name or "Chưa đọc được tên khách", 15, True)
         write(f"Mã đặt phòng: {booking.booking_id}", body_size + 1, True)
+        if payment_completed:
+            write("ĐÃ THANH TOÁN - KHÔNG THU LẠI THẺ NÀY", body_size + 1, True, color="#A03226")
         details(data.fields, [("phone", "Điện thoại"), ("email", "Email")])
         if data.fields.get("booked"):
             write(f"Ngày đặt: {data.fields['booked']}", color=muted)
         arrival = booking.checkin_date.strftime("%d/%m/%Y") if booking.checkin_date else "Chưa rõ"
         departure = booking.checkout_date.strftime("%d/%m/%Y") if booking.checkout_date else "Chưa rõ"
         write(f"Đến: {arrival}   |   Đi: {departure}   |   Số đêm: {booking.nights or 'Chưa rõ'}", bold=True)
+        details(data.fields, [("rate_channel", "Kênh giá"), ("coupons", "Ưu đãi / mã giảm giá")])
         section(f"PHÒNG ĐÃ ĐẶT / {len(data.rooms)} NHÓM PHÒNG")
+        if source == "Traveloka" and data.fields.get("requests"):
+            write(f"Yêu cầu booking: {data.fields['requests']}")
         for index, room in enumerate(data.rooms, 1):
             fields = room.fields
             quantity = f" x{fields['quantity']}" if fields.get("quantity") else " (số lượng chưa rõ)"
             write(f"{index}. {fields.get('room', 'Chưa rõ hạng phòng')}{quantity}", bold=True)
             details(fields, [("guest", "Khách"), ("confirmation", "Mã KS"),
                              ("adults", "Người lớn"), ("children", "Trẻ em"), ("room_nights", "Room nights")])
+            details(fields, [("extra_beds", "Giường phụ"), ("meal", "Bữa ăn")])
             details(fields, [("checkin", "Đến"), ("checkout", "Đi")])
-            details(fields, [("requests", "Yêu cầu"), ("rate", "Rate"), ("discount", "Ưu đãi")])
+            room_details = dict(fields)
+            if source == "Traveloka" and room_details.get("requests") == data.fields.get("requests"):
+                room_details.pop("requests", None)
+            details(room_details, [("requests", "Yêu cầu"), ("rate", "Rate"), ("discount", "Ưu đãi")])
             if fields.get("daily_rate"):
                 write(fields["daily_rate"])
-            details(fields, [("total", "Giá trị booking"), ("payable", "Thu Expedia")])
+            details(fields, [("total", "Giá trị booking"), ("payable", payable_label)])
             details(fields, [("taxes", "Thuế"), ("extra_person", "Khách thêm"), ("extra_charges", "Phụ thu")])
             if fields.get("payment") and fields["payment"] != data.fields.get("payment"):
                 write(f"Thanh toán nhóm {index}: {fields['payment']}")
             if fields.get("notes") and fields["notes"] != data.fields.get("notes"):
                 write(f"Chỉ dẫn nhóm {index}: {fields['notes']}")
-        section("THANH TOÁN / THẺ THU TIỀN")
+            if fields.get("cancellation_policy") and fields["cancellation_policy"] != data.fields.get("cancellation_policy"):
+                write(f"Chính sách hủy nhóm {index}: {fields['cancellation_policy']}")
+        section("THANH TOÁN ĐÃ HOÀN TẤT / THẺ GHI TRONG EMAIL" if payment_completed else "THANH TOÁN / THẺ THU TIỀN")
         # Room-specific amounts above are authoritative. Do not sum ambiguous booking-wide totals.
-        if len(data.rooms) == 1:
-            write(f"Khoản khách sạn thu: {booking.total_revenue or 'Chưa rõ - kiểm tra email gốc'}", body_size + 1, True)
+        if len(data.rooms) == 1 or source == "Traveloka":
+            amount_label = "Khoản thanh toán ghi trong email" if payment_completed else "Khoản khách sạn thu"
+            write(f"{amount_label}: {booking.total_revenue or 'Chưa rõ - kiểm tra email gốc'}", body_size + 1, True)
+        if source == "Traveloka":
+            details(data.fields, [("subtotal", "Trước điều chỉnh"), ("adjustment", "Điều chỉnh"), ("payable", payable_label)])
         if data.fields.get("payment"):
             write(f"Hình thức: {data.fields['payment']}")
+        if data.fields.get("payment_status"):
+            write(f"Trạng thái thanh toán: {data.fields['payment_status']}", bold=True,
+                  color="#A03226" if payment_completed else navy)
+        details(data.fields, [("payment_id", "Mã thanh toán"), ("invoice_amount", "Giá trị hóa đơn"), ("deposit", "Tạm ứng")])
+        details(data.fields, [("refund", "Hoàn tiền"), ("receipt_total", "Tổng thanh toán"), ("vcc_amount", "Giá trị VCC")])
         if not data.cards:
             write("Email không có số thẻ. Không tự tạo số thẻ hoặc CVV.", bold=True)
-        for card in data.cards:
+        for card, already_charged in zip(data.cards, charged_cards, strict=True):
             fields = card.fields
             write("Thẻ cho nhóm phòng " + ", ".join(map(str, card.rooms)) if card.rooms
-                  else "Thẻ Expedia ghi trong email - kiểm tra phân bổ khoản thu", bold=True)
+                  else f"Thẻ {source} ghi trong email - kiểm tra phân bổ khoản thu", bold=True)
+            if already_charged:
+                write("THẺ ĐÃ ĐƯỢC THU - KHÔNG THU LẠI THẺ NÀY", body_size + 1, True, color="#A03226")
             write(f"Số thẻ: {fields.get('pan', 'Không có trong email')}", body_size + 2, True)
             details(fields, [("expiry", "Hết hạn"), ("cvv", "CVV"), ("activation", "Kích hoạt")])
             details(fields, [("holder", "Chủ thẻ"), ("address", "Địa chỉ thanh toán")])
+            details(fields, [("amount", "Giá trị thẻ"), ("status", "Trạng thái thẻ")])
         if data.fields.get("includes"):
             write(f"Khoản thu bao gồm: {data.fields['includes']}")
         if data.fields.get("notes"):
             write(f"Chỉ dẫn: {data.fields['notes']}")
-        write("Chỉ thu đúng khoản Expedia cho phép; khách tự thanh toán chi phí phát sinh.", bold=True)
+        if data.fields.get("cancellation_policy"):
+            write(f"Chính sách hủy: {data.fields['cancellation_policy']}")
+        if payment_completed:
+            instruction = "Phiếu xác nhận thanh toán đã hoàn tất. Không dùng thông tin thẻ này để thu tiền lần nữa."
+        elif any(charged_cards):
+            instruction = f"Chỉ thu khoản chưa thanh toán mà {source} cho phép; không thu lại thẻ được ghi là đã thu tiền."
+        else:
+            instruction = f"Chỉ thu đúng khoản {source} cho phép; khách tự thanh toán chi phí phát sinh."
+        write(instruction, bold=True)
         if y <= 790 * scale:
             draw.line((left, 803 * scale, right, 803 * scale), fill="#CCD2DB", width=2)
             draw.text((left, 809 * scale), "NỘI BỘ - CÓ THÔNG TIN THẺ / KHÔNG GIAO KHÁCH / BẢO QUẢN AN TOÀN",
@@ -366,3 +413,13 @@ def render_expedia_a4(data: ExpediaPrintData, font_path: str | None = None) -> I
             return image
         image.close()
     raise ExpediaPrintError("Thông tin quá dài để vừa một trang A4 ở cỡ chữ dễ đọc. Không in thiếu phòng/thẻ; hãy kiểm tra email gốc.")
+
+
+def render_expedia_a4(data: ExpediaPrintData, font_path: str | None = None) -> Image.Image:
+    """Backward-compatible entry point; shared layout preserves Expedia output."""
+    return render_booking_a4(data, font_path)
+
+
+def render_traveloka_a4(data: ExpediaPrintData, font_path: str | None = None) -> Image.Image:
+    """Render Traveloka booking/card details with the same one-page A4 safeguards."""
+    return render_booking_a4(data, font_path)

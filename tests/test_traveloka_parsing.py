@@ -41,6 +41,44 @@ def test_traveloka_confirmation_matches_anonymized_sample_structure():
     assert event.total_revenue == "VND 800,000"
 
 
+@pytest.mark.parametrize("subject", [
+    "PAYMENT COMPLETED - Payment ID 1779000000000001 (Test Hotel, VIETNAM)",
+    "Re: PAYMENT COMPLETED - Payment ID 1779000000000001",
+    "Payment received - Traveloka Itinerary ID 20261234000001",
+])
+def test_traveloka_payment_receipt_never_alerts_even_when_it_quotes_confirmation(subject):
+    assert parse_booking_message(make_message(
+        subject=subject, html=FIXTURE.read_text(encoding="utf-8"),
+    )) is None
+
+
+def test_booking_multiline_guest_and_room_never_absorb_card_fields_into_saved_event():
+    message = make_message(text="""Traveloka booking confirmation
+Itinerary ID: 20261234000001
+Guest Name:
+Synthetic
+Full Guest
+Virtual Credit Card:
+4111111111111111
+CVC:
+987
+Check-in: 2026-10-04
+Check-out: 2026-10-06
+Room Type:
+Deluxe Double
+Card Number:
+5555555555554444
+Valid Until:
+12/2028
+Total you will receive: VND 400,000
+""")
+    event = parse_booking_message(message)
+    assert event is not None and event.guest_name == "Synthetic Full Guest"
+    assert event.room_type == "Deluxe Double"
+    saved = str(event.to_dict())
+    assert "4111111111111111" not in saved and "5555555555554444" not in saved and "987" not in saved
+
+
 @pytest.mark.parametrize("sender", [
     "Traveloka <booking@traveloka.com>",
     "TRAVELOKA <BOOKING@TRAVELOKA.COM>",

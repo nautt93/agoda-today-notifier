@@ -96,7 +96,7 @@ class PrinterJob:
             target_width, target_height = round(image.width * factor), round(image.height * factor)
             x, y = (width - target_width) // 2, (height - target_height) // 2
             # A neutral spool title avoids guest/card details in the Windows print queue.
-            info = DOCINFOW(ct.sizeof(DOCINFOW), "Booking Desk - Expedia A4", output, None, 0)
+            info = DOCINFOW(ct.sizeof(DOCINFOW), "Booking Desk - Booking A4", output, None, 0)
             if self.gdi.StartDocW(self.hdc, ct.byref(info)) <= 0:
                 raise ExpediaPrintError("Không tạo được lệnh in. Kiểm tra máy in và thử lại.")
             started = True

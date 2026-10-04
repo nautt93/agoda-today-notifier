@@ -11,7 +11,7 @@ from .config import STATE_PATH, atomic_json_write
 from .models import BOOKING_SOURCES, BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent, booking_storage_id
 
 STATE_SCHEMA = 5
-PARSER_STATE_VERSION = "p11"
+PARSER_STATE_VERSION = "p12"
 
 
 def _now() -> str:

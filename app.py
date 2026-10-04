@@ -29,7 +29,7 @@ from booking_notifier.config import (
     ConfigStore,
 )
 from booking_notifier.excel_export import excel_tsv, excel_tsv_rows  # noqa: F401 (public compatibility)
-from booking_notifier.expedia_print import ExpediaPrintError, fetch_expedia_print, render_expedia_a4
+from booking_notifier.expedia_print import ExpediaPrintError, fetch_expedia_print, render_booking_a4, render_expedia_a4
 from booking_notifier.f92_device import F92Worker
 from booking_notifier.mail_monitor import ImapMonitor, is_quiet_hours, test_imap_connection
 from booking_notifier.models import BOOKING_SOURCES, BookingEvent
@@ -43,6 +43,7 @@ from booking_notifier.ota_update import (
 from booking_notifier.security import protect_secret, unprotect_secret
 from booking_notifier.state import StateStore
 from booking_notifier.system_tray import SystemTray
+from booking_notifier.traveloka_print import fetch_traveloka_print
 from booking_notifier.windows_print import choose_printer
 
 LOGGER = logging.getLogger("booking_notifier")
@@ -838,14 +839,14 @@ class BookingNotifierApp:
                 elif event_type == "history_changed":
                     self.refresh_history()
                     self._refresh_pending_details()
-                elif event_type == "expedia_print_ready":
+                elif event_type in {"expedia_print_ready", "booking_print_ready"}:
                     self.print_loading = False
                     alert, image, error = payload
                     if error:
-                        messagebox.showerror("In phiếu Expedia", error, parent=self.active_popup or self.root)
+                        messagebox.showerror(f"In phiếu {alert.source}", error, parent=self.active_popup or self.root)
                     else:
                         self.show_expedia_print_preview(alert, image)
-                elif event_type == "expedia_print_done":
+                elif event_type in {"expedia_print_done", "booking_print_done"}:
                     self.print_spooling = False
                     preview, button, feedback, error = payload
                     if preview.winfo_exists():
@@ -1035,7 +1036,7 @@ class BookingNotifierApp:
         popup = tk.Toplevel(self.root)
         self.active_popup = popup
         popup.title(f"{alert.source} • Check-in hôm nay")
-        width, height = 620, 700 if alert.source == "Expedia" else 640
+        width, height = 620, 700 if alert.source in {"Expedia", "Traveloka"} else 640
         x = max(0, (popup.winfo_screenwidth() - width) // 2)
         y = max(0, (popup.winfo_screenheight() - height) // 2 - 20)
         popup.geometry(f"{width}x{height}+{x}+{y}")
@@ -1104,10 +1105,10 @@ class BookingNotifierApp:
             footer, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
             font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(0, 12))
-        if alert.source == "Expedia":
+        if alert.source in {"Expedia", "Traveloka"}:
             ttk.Button(
-                footer, name="print_expedia", text="In phiếu Expedia - 1 trang A4",
-                command=lambda selected=alert: self.request_expedia_print(selected),
+                footer, name=f"print_{alert.source.lower()}", text=f"In phiếu {alert.source} - 1 trang A4",
+                command=lambda selected=alert: self._request_source_print(selected),
                 style="Secondary.TButton", takefocus=True,
             ).pack(fill="x", ipady=8, pady=(0, 12))
         actions = tk.Frame(footer, name="booking_actions", bg=self.COLORS["surface"])
@@ -1127,9 +1128,9 @@ class BookingNotifierApp:
             activebackground=self.COLORS["gold"], activeforeground="#FFFFFF", relief="solid", borderwidth=1,
         )
         self.active_menu.add_command(label="Sao chép booking sang Excel", command=self.copy_active_alert)
-        if alert.source == "Expedia":
-            self.active_menu.add_command(label="In phiếu Expedia - 1 trang A4",
-                                         command=lambda selected=alert: self.request_expedia_print(selected))
+        if alert.source in {"Expedia", "Traveloka"}:
+            self.active_menu.add_command(label=f"In phiếu {alert.source} - 1 trang A4",
+                                         command=lambda selected=alert: self._request_source_print(selected))
         popup.bind("<Button-3>", self.show_active_context_menu)
         popup.bind("<Button-2>", self.show_active_context_menu)
         popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
@@ -1326,10 +1327,10 @@ class BookingNotifierApp:
         self.history_menu.delete(0, "end")
         self.history_menu.add_command(label="Sao chép dòng đã chọn sang Excel", command=self.copy_selected_history)
         record = self.history_rows.get(row_id)
-        if record and record.get("source") == "Expedia":
+        if record and record.get("source") in {"Expedia", "Traveloka"}:
             selected = BookingEvent.from_dict(record)
-            self.history_menu.add_command(label="In phiếu Expedia - 1 trang A4",
-                                         command=lambda alert=selected: self.request_expedia_print(alert))
+            self.history_menu.add_command(label=f"In phiếu {selected.source} - 1 trang A4",
+                                         command=lambda alert=selected: self._request_source_print(alert))
         try:
             self.history_menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -1337,26 +1338,40 @@ class BookingNotifierApp:
         return "break"
 
     def request_expedia_print(self, alert: BookingEvent) -> None:
-        if alert.source != "Expedia" or self.closing or self.print_loading or self.print_spooling:
+        """Keep the original Expedia action entry point for saved UI integrations."""
+        if alert.source == "Expedia":
+            self.request_booking_print(alert)
+
+    def _request_source_print(self, alert: BookingEvent) -> None:
+        if alert.source == "Expedia":
+            self.request_expedia_print(alert)
+        else:
+            self.request_booking_print(alert)
+
+    def request_booking_print(self, alert: BookingEvent) -> None:
+        if alert.source not in {"Expedia", "Traveloka"} or self.closing or self.print_loading or self.print_spooling:
             return
         try:
             password = unprotect_secret(str(self.config.get("password_encrypted", "")))
         except Exception:
             password = ""
         if not password or not self.config.get("email_address"):
-            messagebox.showerror("In phiếu Expedia", "Hãy lưu email và mật khẩu ứng dụng trong Cài đặt trước khi in.",
+            messagebox.showerror(f"In phiếu {alert.source}", "Hãy lưu email và mật khẩu ứng dụng trong Cài đặt trước khi in.",
                                  parent=self.active_popup or self.root)
             return
         self.print_loading = True
         config = dict(self.config)
         # Freeze the clicked booking, even if the next notification opens while IMAP is loading.
         selected = BookingEvent.from_dict(alert.to_dict())
-        self.set_status("Đang đọc email gốc để tạo phiếu Expedia A4…")
+        self.set_status(f"Đang đọc email gốc để tạo phiếu {selected.source} A4…")
 
         def worker() -> None:
             image, error = None, ""
             try:
-                image = render_expedia_a4(fetch_expedia_print(config, password, selected))
+                if selected.source == "Expedia":
+                    image = render_expedia_a4(fetch_expedia_print(config, password, selected))
+                else:
+                    image = render_booking_a4(fetch_traveloka_print(config, password, selected))
             except ExpediaPrintError as exc:
                 error = str(exc)
             except Exception:
@@ -1367,9 +1382,12 @@ class BookingNotifierApp:
             elif image is not None:
                 image.close()
 
-        threading.Thread(target=worker, name="ExpediaPrintLoad", daemon=True).start()
+        threading.Thread(target=worker, name=f"{selected.source}PrintLoad", daemon=True).start()
 
     def close_expedia_print_preview(self) -> None:
+        self.close_booking_print_preview()
+
+    def close_booking_print_preview(self) -> None:
         if self.print_spooling and not self.closing:
             return  # Keep the native print dialog's owner valid until cancel/completion.
         if self.print_preview is not None:
@@ -1383,22 +1401,25 @@ class BookingNotifierApp:
             self._present_alert_popup(self.active_popup)
 
     def show_expedia_print_preview(self, alert: BookingEvent, image: Any) -> None:
+        self.show_booking_print_preview(alert, image)
+
+    def show_booking_print_preview(self, alert: BookingEvent, image: Any) -> None:
         from PIL import Image, ImageTk
 
         if self.print_spooling:
             image.close()
-            self.set_status("Đang in phiếu Expedia trước đó; hãy thử lại sau khi in/hủy in xong")
+            self.set_status("Đang in phiếu trước đó; hãy thử lại sau khi in/hủy in xong")
             return
-        self.close_expedia_print_preview()
+        self.close_booking_print_preview()
         preview = tk.Toplevel(self.root)
         self.print_preview, self.print_preview_image = preview, image
-        preview.title(f"Expedia - Phiếu A4 - {alert.booking_id}")
+        preview.title(f"{alert.source} - Phiếu A4 - {alert.booking_id}")
         preview.configure(bg=self.COLORS["bg"])
         # Independent of the hidden main window, just like booking popups.
         preview.attributes("-topmost", True)
-        preview.protocol("WM_DELETE_WINDOW", self.close_expedia_print_preview)
-        preview.bind("<Escape>", lambda _event: self.close_expedia_print_preview())
-        tk.Label(preview, text="PHIẾU EXPEDIA / 1 TRANG A4", font=("Segoe UI Semibold", 14),
+        preview.protocol("WM_DELETE_WINDOW", self.close_booking_print_preview)
+        preview.bind("<Escape>", lambda _event: self.close_booking_print_preview())
+        tk.Label(preview, text=f"PHIẾU {alert.source.upper()} / 1 TRANG A4", font=("Segoe UI Semibold", 14),
                  bg=self.COLORS["bg"], fg=self.COLORS["primary"]).pack(pady=(14, 4))
         tk.Label(preview, text="Nội bộ: có thông tin thẻ/CVV. Không giao khách. Bảo quản và hủy giấy an toàn.\n"
                  "Ứng dụng không lưu phiếu vào đĩa; máy in hoặc máy in PDF có thể lưu bản in.",
@@ -1459,16 +1480,16 @@ class BookingNotifierApp:
                 if not self.closing:
                     self.events.put(("expedia_print_done", (preview, print_button, feedback, error)))
 
-            threading.Thread(target=worker, name="ExpediaPrintSpool", daemon=True).start()
+            threading.Thread(target=worker, name=f"{alert.source}PrintSpool", daemon=True).start()
 
         print_button = ttk.Button(actions, text="In 1 trang A4", command=send_to_printer, style="Primary.TButton")
         print_button.grid(row=0, column=0, sticky="nsew", ipady=10, padx=(0, 5))
-        ttk.Button(actions, name="close_preview", text="Đóng bản xem trước", command=self.close_expedia_print_preview,
+        ttk.Button(actions, name="close_preview", text="Đóng bản xem trước", command=self.close_booking_print_preview,
                    style="Secondary.TButton").grid(row=0, column=1, sticky="nsew", ipady=10, padx=(5, 0))
         preview.update_idletasks()
         preview.lift()
         preview.focus_force()
-        self.set_status("Đã mở phiếu Expedia A4; ứng dụng vẫn theo dõi booking")
+        self.set_status(f"Đã mở phiếu {alert.source} A4; ứng dụng vẫn theo dõi booking")
 
     def copy_selected_history(self, _event: object = None) -> str:
         selection = self.history_tree.selection()
