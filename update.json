@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.17",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.17/Booking-Checkin-Hom-Nay-1.7.17.exe",
-  "sha256": "2d80fc7d483439049345b79394b80008ab75710302ccd15360d105af4594c4a0",
-  "size": 24617669,
-  "notes": "Thêm Traveloka cùng cơ chế Agoda/Expedia: chỉ báo xác nhận mới check-in hôm nay, đủ tên/hạng phòng/số phòng, nguồn và ghi chú Excel là Traveloka. Tích hợp nguyên bản 1-agoda.mp3, 2-expedia.mp3 và 3-traveloka.mp3; lần cập nhật này tự gắn đúng âm theo nguồn, sau đó giữ lựa chọn riêng. MP3 đi kèm EXE, dùng được trên máy khác không cần chép tay. Giữ chống trùng, popup khi ẩn khay, 9 cột Excel, in Expedia A4, F92, cấu hình/email/mật khẩu và mốc UID. Nâng parser chỉ đọc lại tối đa 20 thư gần nhất một lần để nhận Traveloka đã đến; không quét toàn bộ hộp thư hoặc báo lại booking đã đóng. Đã kiểm tra mẫu Traveloka, nội dung 3 MP3, đường âm theo nguồn, popup Windows và cập nhật EXE thực tế.",
-  "signature": "vv7uUuKKEYNyeAtghnqtBbTCUnK15QPLnLxthsb6EGnH36froxxZ8e4xdiPlC7k3SJK/CIy4DhmLifZLr0oEAg=="
+  "version": "1.7.18",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.18/Booking-Checkin-Hom-Nay-1.7.18.exe",
+  "sha256": "586f03a9102f8d7ee9a3fe4e97196217834587571217f107e19c62bb31d2177e",
+  "size": 24640676,
+  "notes": "Thêm in Traveloka 1 trang A4 tương tự Expedia: nút In trong popup và menu chuột phải, đủ thông tin khách/phòng/thanh toán cùng các trường thẻ thực sự có trong email. Không tự tạo số thẻ/CVV khi email không có. Phiếu chỉ xử lý trong bộ nhớ; xem trước và in không xác nhận booking, không ngắt âm thanh hay theo dõi thư. Giữ 3 âm thanh Agoda/Expedia/Traveloka đi kèm EXE, cơ chế chỉ booking mới check-in hôm nay, chống trùng, Excel 9 cột, F92, cấu hình, lịch sử và mốc UID. Đã kiểm tra bản in A4 Windows và cập nhật EXE thực tế.",
+  "signature": "bG1RyPp5gX0JPp3xOKOc5/mef+HnqdyoC8P+f+BkND9G/SfVfdHbpOPL8EAGRPr4IRy2L/gahDPpZdIgtIVnDw=="
 }
