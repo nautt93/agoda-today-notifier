@@ -122,6 +122,7 @@ class BookingNotifierApp:
         "agoda": "#D94A43",
         "expedia": "#2563A9",
         "traveloka": "#08869B",
+        "trip": "#565FBC",
         "header_text": "#F7F2E8",
     }
 
@@ -150,6 +151,9 @@ class BookingNotifierApp:
         self.active_popup: tk.Toplevel | None = None
         self.active_guest_var: tk.StringVar | None = None
         self.active_room_var: tk.StringVar | None = None
+        self.active_revenue_var: tk.StringVar | None = None
+        self.active_checkout_var: tk.StringVar | None = None
+        self.active_nights_var: tk.StringVar | None = None
         self.queued_ids: set[str] = set()
         self.sound_active = False
         self.sound_uses_file = False
@@ -302,7 +306,7 @@ class BookingNotifierApp:
             font=("Segoe UI Semibold", 21),
         ).pack(anchor="w")
         tk.Label(
-            brand_text, text="Agoda + Expedia + Traveloka  •  Chỉ báo khách đến hôm nay",
+            brand_text, text="Agoda + Expedia + Traveloka + Trip  •  Chỉ báo khách đến hôm nay",
             bg=self.COLORS["primary"], fg="#BFC9D8", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(3, 0))
 
@@ -315,7 +319,7 @@ class BookingNotifierApp:
         ).pack(anchor="e")
         self.status_label = tk.Label(
             status_box, textvariable=self.status_var, bg=self.COLORS["primary"], fg=self.COLORS["success"],
-            font=("Segoe UI Semibold", 10), anchor="e",
+            font=("Segoe UI Semibold", 10), anchor="e", justify="right", wraplength=340,
         )
         self.status_label.pack(anchor="e", pady=(8, 0))
 
@@ -534,7 +538,7 @@ class BookingNotifierApp:
             preview = ttk.Button(row, text=f"Nghe thử {source}", command=lambda s=source: self.preview_source_sound(s), style="Secondary.TButton")
             preview.pack(side="left", padx=(8, 0))
             self.sound_preview_buttons[source] = preview
-        ttk.Label(sounds, text="Đã tích hợp: Agoda → 1-agoda.mp3; Expedia → 2-expedia.mp3; Traveloka → 3-traveloka.mp3.\nĐể trống: dùng tệp tích hợp đúng nguồn. Có thể chọn tệp riêng; nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(0, 12))
+        ttk.Label(sounds, text="Đã tích hợp: Agoda → 1-agoda.mp3; Expedia → 2-expedia.mp3;\nTraveloka → 3-traveloka.mp3; Trip → 4-trip.mp3 (âm thanh bạn cung cấp).\nĐể trống: dùng tệp tích hợp đúng nguồn. Có thể chọn tệp riêng; nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(0, 12))
         ttk.Label(sounds, text="Âm thanh chung dự phòng (giữ cấu hình cũ)", style="Field.TLabel").pack(anchor="w", pady=(0, 5))
         common = ttk.Frame(sounds, style="Card.TFrame")
         common.pack(fill="x")
@@ -649,6 +653,7 @@ class BookingNotifierApp:
             "scan_days": min(365, max(1, int(self.scan_days_var.get()))),
             "sound_file": self.sound_var.get().strip(),
             "source_sound_pack": str(self.config.get("source_sound_pack", "")),
+            "trip_sound_pack": str(self.config.get("trip_sound_pack", "")),
             **{f"{source.lower()}_sound_file": variable.get().strip() for source, variable in self.source_sound_vars.items()},
             "quiet_hours_enabled": self.quiet_var.get(),
             "start_with_windows": self.start_windows_var.get(),
@@ -1056,6 +1061,11 @@ class BookingNotifierApp:
         ).pack(anchor="w")
         self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or "Chưa đọc được tên khách")
         self.active_room_var = tk.StringVar(master=popup, value=alert.room_type or "—")
+        self.active_revenue_var = tk.StringVar(master=popup, value=alert.total_revenue or "—")
+        self.active_checkout_var = tk.StringVar(
+            master=popup, value=alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else "—",
+        )
+        self.active_nights_var = tk.StringVar(master=popup, value=str(alert.nights) if alert.nights is not None else "—")
         tk.Label(
             hero_text, textvariable=self.active_guest_var,
             bg=self.COLORS["primary"], fg=self.COLORS["header_text"], font=("Segoe UI Semibold", 22),
@@ -1085,6 +1095,10 @@ class BookingNotifierApp:
             ("Số đêm", str(alert.nights) if alert.nights is not None else "—"),
             ("Tổng thu", alert.total_revenue or "—"),
         ]
+        detail_vars = {
+            "Hạng phòng": self.active_room_var, "Tổng thu": self.active_revenue_var,
+            "Check-out": self.active_checkout_var, "Số đêm": self.active_nights_var,
+        }
         for index, (label, value) in enumerate(rows):
             row = tk.Frame(info_card, bg=self.COLORS["surface_alt"])
             row.pack(fill="x", pady=5)
@@ -1093,7 +1107,7 @@ class BookingNotifierApp:
                 fg=self.COLORS["muted"], font=("Segoe UI Semibold", 8),
             ).pack(side="left")
             tk.Label(
-                row, **({"textvariable": self.active_room_var} if label == "Hạng phòng" else {"text": value}),
+                row, **({"textvariable": detail_vars[label]} if label in detail_vars else {"text": value}),
                 anchor="w", bg=self.COLORS["surface_alt"], fg=self.COLORS["text"],
                 font=("Segoe UI Semibold", 10), wraplength=380, justify="left",
             ).pack(side="left", fill="x", expand=True)
@@ -1255,7 +1269,7 @@ class BookingNotifierApp:
             if saved is None or saved.checkin_date != alert.checkin_date:
                 continue
             changed = False
-            for field in ("guest_name", "room_type"):
+            for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "subject", "sender", "received_at"):
                 value = getattr(saved, field)
                 if value and value != getattr(alert, field):
                     setattr(alert, field, value)
@@ -1265,6 +1279,14 @@ class BookingNotifierApp:
                     self.active_guest_var.set(alert.guest_name or "Chưa đọc được tên khách")
                 if self.active_room_var is not None:
                     self.active_room_var.set(alert.room_type or "—")
+                for variable_name, value in (
+                    ("active_revenue_var", alert.total_revenue or "—"),
+                    ("active_checkout_var", alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else "—"),
+                    ("active_nights_var", str(alert.nights) if alert.nights is not None else "—"),
+                ):
+                    variable = getattr(self, variable_name, None)
+                    if variable is not None:
+                        variable.set(value)
                 try:
                     self.f92_worker.notify(alert, play_sound=False)
                 except Exception:
@@ -1292,6 +1314,9 @@ class BookingNotifierApp:
             self.active_popup = None
         self.active_guest_var = None
         self.active_room_var = None
+        self.active_revenue_var = None
+        self.active_checkout_var = None
+        self.active_nights_var = None
         self.refresh_history()
         self._show_next_alert()
 

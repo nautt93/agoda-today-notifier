@@ -84,13 +84,13 @@ class ImapMonitor(threading.Thread):
         self.event_queue.put((event_type, payload))
 
     def run(self) -> None:
-        self.emit("status", "Đang theo dõi email Agoda + Expedia + Traveloka")
+        self.emit("status", "Đang theo dõi email Agoda + Expedia + Traveloka + Trip")
         while not self.stop_event.is_set():
             try:
                 processed = self.scan_mailbox()
                 if processed:
                     self.emit("log", f"Đã đọc {processed} email mới.")
-                self.emit("status", "Đang theo dõi email Agoda + Expedia + Traveloka")
+                self.emit("status", "Đang theo dõi email Agoda + Expedia + Traveloka + Trip")
             except Exception as exc:
                 LOGGER.exception("IMAP scan failed")
                 self.emit("error", friendly_error(exc))
@@ -108,7 +108,7 @@ class ImapMonitor(threading.Thread):
         failed_count = 0
         today_count = 0
         other_day_count = 0
-        self.emit("status", "Đang kiểm tra thư mới nhất Agoda + Expedia + Traveloka…")
+        self.emit("status", "Đang kiểm tra thư mới nhất Agoda + Expedia + Traveloka + Trip…")
         if self.repair_requested.is_set():
             self.detail_repair_attempts.clear()
             self.repair_requested.clear()

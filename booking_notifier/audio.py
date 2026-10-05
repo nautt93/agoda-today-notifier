@@ -14,24 +14,29 @@ SOURCE_SOUND_KEYS = {
     "agoda": "agoda_sound_file",
     "expedia": "expedia_sound_file",
     "traveloka": "traveloka_sound_file",
+    "trip": "trip_sound_file",
 }
-SOURCE_SOUND_FILES = {"agoda": "1-agoda.mp3", "expedia": "2-expedia.mp3", "traveloka": "3-traveloka.mp3"}
+SOURCE_SOUND_FILES = {"agoda": "1-agoda.mp3", "expedia": "2-expedia.mp3", "traveloka": "3-traveloka.mp3", "trip": "4-trip.mp3"}
 SOURCE_SOUND_PACK = "hotel-mp3-v1"
+TRIP_SOUND_PACK = "trip-mp3-v1"
 SOURCE_SOUND_SHA256 = {
     "agoda": "3fa61f373996074a05dc1851d96510dea3081df922e3efd17a9910582ed920c9",
     "expedia": "5badf83c9b0dbccf032f49d16d8d510693f2d55084cf7a7086ff55b277bffb69",
     "traveloka": "dbd9535a22f4f6f48952f3598048b213923818dc633b45d28813e4577015762e",
+    "trip": "e998ab377bfb81d68bed847045a5c8135cdca94da15a5f46dc997d3ab6cd07e4",
 }
 SOURCE_PCM_FILES = {source: Path(filename).stem + "-pcm.wav" for source, filename in SOURCE_SOUND_FILES.items()}
 SOURCE_PCM_SHA256 = {
     "agoda": "65f52af3772aac91753e9c8646963ce9dc25e02e8b533e7a19b52865871050ec",
     "expedia": "732e0a4a9ab44ff5f10dbb6c9e9f863b6837a2736a19cb8668c6688f599c0b38",
     "traveloka": "b7f80a489713fe6e553d392fb84330c2a2323c6f31835ec1b055423c9ce3123a",
+    "trip": "745006680189974e73add2f9bba9c5f585636c998fde37a161c1b25a0936f7c4",
 }
 CHIME_NOTES = {
     "agoda": (659.25, 880.0),
     "expedia": (523.25, 659.25, 783.99),
     "traveloka": (783.99, 659.25, 523.25),
+    "trip": (880.0, 523.25, 783.99, 659.25),
 }
 SAMPLE_RATE = 22050
 

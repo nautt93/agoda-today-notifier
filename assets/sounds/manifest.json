@@ -37,6 +37,17 @@
       "pcm_sha256": "b7f80a489713fe6e553d392fb84330c2a2323c6f31835ec1b055423c9ce3123a",
       "pcm_sample_frames": 117291,
       "pcm_duration_seconds": 2.659659863945578
+    },
+    "Trip": {
+      "filename": "4-trip.mp3",
+      "bytes": 37660,
+      "duration_seconds": 2.324898,
+      "sha256": "e998ab377bfb81d68bed847045a5c8135cdca94da15a5f46dc997d3ab6cd07e4",
+      "pcm_filename": "4-trip-pcm.wav",
+      "pcm_bytes": 200586,
+      "pcm_sha256": "745006680189974e73add2f9bba9c5f585636c998fde37a161c1b25a0936f7c4",
+      "pcm_sample_frames": 100271,
+      "pcm_duration_seconds": 2.273718820861678
     }
   }
 }

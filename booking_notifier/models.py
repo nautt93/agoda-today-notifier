@@ -8,7 +8,7 @@ from typing import Any
 BOOKING_STATUS_NEW = "new"
 BOOKING_STATUS_MODIFIED = "modified"
 BOOKING_STATUS_CANCELLED = "cancelled"
-BOOKING_SOURCES = ("Agoda", "Expedia", "Traveloka")
+BOOKING_SOURCES = ("Agoda", "Expedia", "Traveloka", "Trip")
 
 
 def booking_storage_id(record: dict[str, Any]) -> str:

@@ -22,6 +22,7 @@ TRUSTED_DOMAINS = {
     "Agoda": ("agoda.com", "agoda.net"),
     "Expedia": ("expedia.com", "expediagroup.com", "expediapartnercentral.com"),
     "Traveloka": ("traveloka.com",),
+    "Trip": ("trip.com",),
 }
 
 CHECKIN_LABELS = (
@@ -104,6 +105,14 @@ TRAVELOKA_REVENUE_LABELS = (
     "Amount Payable to Property",
     "Amount Traveloka Will Pay You",
 )
+TRIP_REVENUE_LABELS = (
+    "Your payout",
+    "Amount Payable to Property",
+    "Amount Payable to Hotel",
+    "Net Amount",
+    # Trip's reminder has only this reported amount, not a rate/commission grid.
+    "Total amount",
+)
 
 FIRST_NAME_LABELS = (
     "customer first name", "guest first name", "traveler first name", "first name", "given name", "tên khách hàng",
@@ -124,6 +133,7 @@ FIELD_LABELS = (
     + CHECKIN_LABELS + CHECKOUT_LABELS + CONFIRMATION_LABELS + PAYMENT_MODEL_LABELS
     + AGODA_REVENUE_LABELS + EXPEDIA_COLLECT_REVENUE_LABELS + PROPERTY_COLLECT_REVENUE_LABELS
     + TRAVELOKA_REVENUE_LABELS
+    + TRIP_REVENUE_LABELS
     + CARD_FIELD_LABELS
     + ("booking id", "agoda booking id", "itinerary id", "customer info", "phone", "telephone", "tel",
        "email", "address", "country", "country of residence", "country region of residence", "nationality",
@@ -134,6 +144,8 @@ FIELD_LABELS = (
        "other guests", "khách khác", "yêu cầu đặc biệt", "quốc gia cư trú")
     + ("room information", "guest information", "extra bed information", "guest email",
        "subtotal rates", "promotion and rounding adjustment", "booked and payable by")
+    + ("reservation type", "reservation", "staying period", "bed type", "arrival time", "meals",
+       "guests (estimated)", "payment information", "property confirmation no.")
 )
 
 MONTHS = {
@@ -328,6 +340,13 @@ def is_traveloka_payment_notice(message: Message) -> bool:
 
 def _event_status(subject: str, body: str, source: str = "") -> str:
     subject_n = normalized(subject)
+    if source == "Trip":
+        kind = normalized(_text_value(body, ("Reservation type", "Reservation status", "Booking status", "Notification type")))
+        if re.search(r"\b(?:cancel|cancelled|canceled|cancellation)\b", kind + "\n" + subject_n):
+            return BOOKING_STATUS_CANCELLED
+        if re.search(r"\b(?:modify|modified|modification|amend|amended|amendment|change|changed|update|updated)\b",
+                     kind + "\n" + subject_n):
+            return BOOKING_STATUS_MODIFIED
     if source == "Agoda":
         # Original 1.5.5 rules: ignore cancellation/amendment notices, but do not
         # mistake cancellation policy wording elsewhere in a confirmation for its status.
@@ -387,6 +406,51 @@ def extract_booking_id(text: str, subject: str = "") -> str:
         if match:
             return match.group(1).upper()
     return ""
+
+
+def _trip_booking_id(text: str, subject: str) -> str:
+    identifier = extract_booking_id(text, subject)
+    if identifier:
+        return identifier
+    # The reminder omits ID/No: `Reservation:\n123...`, and its subject is
+    # `Trip.com New Reservation: 123...`. Require an explicit numeric identifier.
+    patterns = (
+        r"\bTrip\.com\s+New\s+Reservation\s*[:#]\s*([0-9]{5,25})\b",
+        r"(?:^|\n)\s*Reservation\s*:\s*([0-9]{5,25})\b",
+    )
+    for pattern in patterns:
+        if match := re.search(pattern, subject + "\n" + text, re.IGNORECASE):
+            return match.group(1)
+    return ""
+
+
+def _trip_stay_dates(text: str, rows: Sequence[Sequence[str]]) -> tuple[date | None, date | None]:
+    value = _row_value(rows, ("Staying period", "Stay dates", "Stay period")) or _text_value(
+        text, ("Staying period", "Stay dates", "Stay period"), 220,
+    )
+    month_names = "|".join(sorted(MONTHS, key=len, reverse=True))
+    tokens = re.findall(
+        rf"\b(?:20\d{{2}}[./-]\d{{1,2}}[./-]\d{{1,2}}"
+        rf"|(?:{month_names})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?[ ,/-]+20\d{{2}}"
+        rf"|\d{{1,2}}(?:st|nd|rd|th)?[ /-]+(?:{month_names})\.?[ ,/-]+20\d{{2}}"
+        rf"|\d{{1,2}}[./-]\d{{1,2}}[./-]20\d{{2}})\b",
+        value, re.IGNORECASE,
+    )
+    if len(tokens) != 2:
+        return None, None
+    return parse_date(tokens[0], "Trip"), parse_date(tokens[1], "Trip")
+
+
+def _trip_inline_room(text: str, rows: Sequence[Sequence[str]]) -> str:
+    value = _row_value(rows, ROOM_LABELS) or _text_label_value(text, ROOM_LABELS, 220)
+    # Keep the complete room/rate-plan name. There is no reliable delimiter
+    # between those two names, only between their name and the room quantity.
+    match = re.search(r"\s*[|·•]\s*(\d{1,3})\s*room(?:\(s\)|s)?(?:\s*Allotment)?\s*$", value, re.IGNORECASE)
+    if not match:
+        return ""
+    room = clean_room_type(value[:match.start()])
+    count = _parse_room_count(match.group(1))
+    return f"{room} x{count}" if room and count else ""
 
 
 def parse_date(value: str, source: str = "") -> date | None:
@@ -825,6 +889,10 @@ def _traveloka_room_information(text: str, rows: Sequence[Sequence[str]]) -> str
 
 
 def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> str:
+    if source == "Trip":
+        trip_room = _trip_inline_room(text, rows)
+        if trip_room:
+            return trip_room
     if source == "Traveloka":
         traveloka_rooms = _traveloka_room_information(text, rows)
         if traveloka_rooms:
@@ -866,6 +934,10 @@ def extract_room_type(text: str, rows: Sequence[Sequence[str]], source: str) -> 
                 return "; ".join(f"{names[key]} x{counts[key]}" for key in order)
 
     for header_index, header in enumerate(rows):
+        if source == "Trip" and len(header) == 1:
+            # The reminder stacks one-cell label/value rows. Its following
+            # Room(s) quantity must not be skipped as an unrelated grid heading.
+            continue
         room_column = _header_index(header, ROOM_LABELS)
         if room_column is None or any(cell.strip() and not _is_field_header(cell) for cell in header):
             continue
@@ -977,6 +1049,8 @@ def extract_payment_model(text: str, rows: Sequence[Sequence[str]]) -> str:
 
 
 def extract_revenue(text: str, rows: Sequence[Sequence[str]], source: str) -> str:
+    if source == "Trip":
+        return _labeled_money(text, rows, TRIP_REVENUE_LABELS)
     if source == "Traveloka":
         return _labeled_money(text, rows, TRAVELOKA_REVENUE_LABELS)
     if source != "Expedia":
@@ -1009,13 +1083,29 @@ def parse_booking_message(message: Message) -> BookingEvent | None:
     sender = str(sender_header)
     body = message_body_text(message)
     rows = message_table_rows(message)
+    if source == "Trip":
+        # Only Trip's stacked reminder uses this colon convention; preserve the
+        # existing Agoda/Expedia/Traveloka parsing semantics unchanged.
+        body = body.replace("：", ":")
+        rows = [[cell.replace("：", ":") for cell in row] for row in rows]
+        if re.search(r"\b(?:payment|remittance|invoice|refund)\b", normalized(subject)) and not re.search(
+                r"\bnew\s+(?:booking|reservation)\b", normalized(subject)):
+            return None
     status = _event_status(subject, body, source)
-    booking_id = extract_booking_id(body, subject)
+    booking_id = _trip_booking_id(body, subject) if source == "Trip" else extract_booking_id(body, subject)
     if not booking_id and source != "Agoda":
         return None
     checkin = _date_by_labels(body, rows, CHECKIN_LABELS, source)
     checkout = _date_by_labels(body, rows, CHECKOUT_LABELS, source)
+    if source == "Trip" and (not checkin or not checkout):
+        stay_checkin, stay_checkout = _trip_stay_dates(body, rows)
+        checkin = checkin or stay_checkin
+        checkout = checkout or stay_checkout
     if status == BOOKING_STATUS_NEW:
+        if source == "Trip":
+            kind = _text_value(body, ("Reservation type", "Reservation status", "Booking status", "Notification type"))
+            if kind and not re.match(r"^(?:new|confirmed)\b", normalized(kind)):
+                return None
         searchable = normalized(subject + "\n" + body[:12000])
         booking_terms = (
             "new reservation", "new booking", "reservation confirmation", "booking confirmation",

@@ -11,11 +11,28 @@ from .config import STATE_PATH, atomic_json_write
 from .models import BOOKING_SOURCES, BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent, booking_storage_id
 
 STATE_SCHEMA = 5
-PARSER_STATE_VERSION = "p12"
+PARSER_STATE_VERSION = "p13"
 
 
 def _now() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _trip_original_has_priority(original: dict[str, Any], reminder: dict[str, Any]) -> bool:
+    """Do not downgrade a Trip original's payout/details with a reminder summary."""
+    original_subject = str(original.get("subject", "")).strip().lower()
+    reminder_subject = str(reminder.get("subject", "")).strip().lower()
+    return (
+        str(original.get("source", "")).lower() == "trip"
+        and str(reminder.get("source", "")).lower() == "trip"
+        and bool(original.get("booking_id"))
+        and original.get("booking_id") == reminder.get("booking_id")
+        and bool(original.get("checkin_date"))
+        and original.get("checkin_date") == reminder.get("checkin_date")
+        and bool(original_subject)
+        and not original_subject.startswith("[reminder]")
+        and reminder_subject.startswith("[reminder]")
+    )
 
 
 class StateStore:
@@ -143,6 +160,14 @@ class StateStore:
             else:
                 old_checkin_text = str(existing.get("checkin_date", ""))
                 incoming = event.to_dict()
+                if _trip_original_has_priority(existing, incoming):
+                    # The original has an explicit net payout and richer room
+                    # plan; the reminder may only contain the guest's total.
+                    # Fill missing details but retain the original provenance.
+                    for field in ("guest_name", "room_type", "total_revenue", "checkout_date",
+                                  "subject", "sender", "received_at"):
+                        if existing.get(field):
+                            incoming[field] = existing[field]
                 for field, value in incoming.items():
                     if value not in (None, ""):
                         existing[field] = value
@@ -222,13 +247,14 @@ class StateStore:
             if self._record_storage_id(record) != storage_id:
                 continue
             historical_checkins.add(str(record.get("checkin_date", "")))
+            prefer_original = _trip_original_has_priority(booking, record)
             for field in ("guest_name", "room_type"):
                 incoming = str(booking.get(field, "")).strip()
                 current = str(record.get(field, "")).strip()
-                if incoming and (not current or len(incoming) > len(current)):
+                if incoming and (prefer_original or not current or len(incoming) > len(current)):
                     record[field] = incoming
             for field in ("total_revenue", "checkout_date", "subject", "sender", "received_at"):
-                if not record.get(field) and booking.get(field):
+                if (prefer_original or not record.get(field)) and booking.get(field):
                     record[field] = booking[field]
 
         checkin = str(booking.get("checkin_date", ""))

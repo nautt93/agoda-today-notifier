@@ -95,7 +95,7 @@ def test_traveloka_popup_tray_copy_close_and_queued_provider_mp3s(tmp_path, monk
             time.sleep(0.02)
         assert app.tray.available and app.tray.icon.visible
         assert app.config["source_sound_pack"] == store.load()["source_sound_pack"] == SOURCE_SOUND_PACK
-        expected_files = {"Agoda": "1-agoda.mp3", "Expedia": "2-expedia.mp3", "Traveloka": "3-traveloka.mp3"}
+        expected_files = {"Agoda": "1-agoda.mp3", "Expedia": "2-expedia.mp3", "Traveloka": "3-traveloka.mp3", "Trip": "4-trip.mp3"}
         assert set(app.source_sound_vars) == set(expected_files)
         for source, filename in expected_files.items():
             path = Path(app.config[f"{source.lower()}_sound_file"])

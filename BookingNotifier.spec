@@ -10,8 +10,8 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(project_dir / "assets" / "sounds" / filename), "assets/sounds")
-        for filename in ("1-agoda.mp3", "2-expedia.mp3", "3-traveloka.mp3",
-                         "1-agoda-pcm.wav", "2-expedia-pcm.wav", "3-traveloka-pcm.wav", "manifest.json")
+        for filename in ("1-agoda.mp3", "2-expedia.mp3", "3-traveloka.mp3", "4-trip.mp3",
+                         "1-agoda-pcm.wav", "2-expedia-pcm.wav", "3-traveloka-pcm.wav", "4-trip-pcm.wav", "manifest.json")
     ],
     hiddenimports=[
         "PIL.ImageTk",

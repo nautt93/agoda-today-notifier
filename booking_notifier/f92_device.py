@@ -184,7 +184,7 @@ class F92Client:
 
     def test_device(self) -> str:
         self.probe()
-        image = render_status_image("Kết nối thành công", "F92 đã sẵn sàng nhận Agoda, Expedia và Traveloka.")
+        image = render_status_image("Kết nối thành công", "F92 đã sẵn sàng nhận Agoda, Expedia, Traveloka và Trip.")
         self.send_framebuffer(image_to_rgb565_le(image))
         if self.settings.builtin_sound_enabled:
             self.play_sound()

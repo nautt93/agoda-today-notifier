@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.18"
+APP_VERSION = "1.7.19"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -33,7 +33,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "agoda_sound_file": "",
     "expedia_sound_file": "",
     "traveloka_sound_file": "",
+    "trip_sound_file": "",
     "source_sound_pack": "",
+    "trip_sound_pack": "",
     "f92_enabled": True,
     "f92_port": "AUTO",
     "f92_sound_index": 4,
@@ -88,7 +90,7 @@ class ConfigStore:
         atomic_json_write(self.path, value)
 
     def install_source_sound_pack(self, directory: Path) -> dict[str, Any]:
-        """Install the requested hotel MP3 mapping once, including existing OTA profiles.
+        """Install each requested sound pack once, including existing OTA profiles.
 
         Subsequent custom source selections survive restarts/updates. Prepare all
         MP3/PCM files before changing settings, so a missing asset cannot partly
@@ -98,18 +100,33 @@ class ConfigStore:
             SOURCE_SOUND_FILES,
             SOURCE_SOUND_KEYS,
             SOURCE_SOUND_PACK,
+            TRIP_SOUND_PACK,
             bundled_source_pcm,
             bundled_source_sound,
         )
 
         config = self.load()
-        if config.get("source_sound_pack") == SOURCE_SOUND_PACK:
+        install_legacy = config.get("source_sound_pack") != SOURCE_SOUND_PACK
+        install_trip = config.get("trip_sound_pack") != TRIP_SOUND_PACK
+        if not install_legacy and not install_trip:
             return config
-        paths = {SOURCE_SOUND_KEYS[source]: str(bundled_source_sound(source, directory))
-                 for source in SOURCE_SOUND_FILES}
-        for source in SOURCE_SOUND_FILES:
-            bundled_source_pcm(source, directory)
+        paths: dict[str, str] = {}
+        if install_legacy:
+            # The original three-source migration must not rerun when adding Trip.
+            legacy_sources = [source for source in SOURCE_SOUND_FILES if source != "trip"]
+            paths.update({SOURCE_SOUND_KEYS[source]: str(bundled_source_sound(source, directory))
+                          for source in legacy_sources})
+            for source in legacy_sources:
+                bundled_source_pcm(source, directory)
+        if install_trip:
+            trip_path = bundled_source_sound("Trip", directory)
+            bundled_source_pcm("Trip", directory)
+            if not str(config.get("trip_sound_file") or "").strip():
+                paths["trip_sound_file"] = str(trip_path)
         config.update(paths)
-        config["source_sound_pack"] = SOURCE_SOUND_PACK
+        if install_legacy:
+            config["source_sound_pack"] = SOURCE_SOUND_PACK
+        if install_trip:
+            config["trip_sound_pack"] = TRIP_SOUND_PACK
         self.save(config)
         return config

@@ -84,7 +84,7 @@ def render_booking_image(alert: object | Mapping[str, Any]) -> Image.Image:
     image = _background()
     draw = ImageDraw.Draw(image)
     source = str(_value(alert, "source") or "Agoda")
-    accent = {"expedia": "#2584FF", "traveloka": "#2DDAE4"}.get(source.lower(), "#F45B52")
+    accent = {"expedia": "#2584FF", "traveloka": "#2DDAE4", "trip": "#99A3FF"}.get(source.lower(), "#F45B52")
     draw.rounded_rectangle((14, 16, 306, 96), radius=18, fill="#102F49", outline=accent, width=2)
     draw.text((28, 30), source.upper(), font=_font(17, True), fill=accent)
     draw.text((28, 56), "CHECK-IN HÔM NAY", font=_font(23, True), fill="#FFFFFF")

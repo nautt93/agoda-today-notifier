@@ -5,7 +5,8 @@ from unittest.mock import Mock
 import pytest
 
 from app import BookingNotifierApp
-from booking_notifier.f92_graphics import image_to_rgb565_le, month_grid, render_idle_image
+from booking_notifier.f92_graphics import image_to_rgb565_le, month_grid, render_booking_image, render_idle_image
+from booking_notifier.models import BookingEvent
 
 
 @pytest.mark.parametrize("today", [date(2026, 9, 30), date(2026, 8, 31), date(2028, 2, 29), date(2027, 1, 1)])
@@ -25,6 +26,19 @@ def test_idle_frame_updates_at_midnight_and_is_valid_f92_frame():
     assert before.size == after.size == (320, 480)
     assert before.tobytes() != after.tobytes()
     assert len(image_to_rgb565_le(after)) == 320 * 480 * 2
+
+
+def test_trip_booking_frame_has_its_own_accent_and_valid_device_payload():
+    frame = render_booking_image(BookingEvent(
+        source="Trip", booking_id="1622000000000001", guest_name="Synthetic Full Trip Guest",
+        room_type="Superior Double Room x1", checkin_date=date(2026, 10, 5),
+    ))
+    try:
+        assert frame.size == (320, 480)
+        assert frame.getpixel((14, 50)) == (153, 163, 255)
+        assert len(image_to_rgb565_le(frame)) == 320 * 480 * 2
+    finally:
+        frame.close()
 
 
 def test_clock_refresh_does_not_overwrite_booking():
