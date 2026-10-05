@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.18",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.18/Booking-Checkin-Hom-Nay-1.7.18.exe",
-  "sha256": "586f03a9102f8d7ee9a3fe4e97196217834587571217f107e19c62bb31d2177e",
-  "size": 24640676,
-  "notes": "Thêm in Traveloka 1 trang A4 tương tự Expedia: nút In trong popup và menu chuột phải, đủ thông tin khách/phòng/thanh toán cùng các trường thẻ thực sự có trong email. Không tự tạo số thẻ/CVV khi email không có. Phiếu chỉ xử lý trong bộ nhớ; xem trước và in không xác nhận booking, không ngắt âm thanh hay theo dõi thư. Giữ 3 âm thanh Agoda/Expedia/Traveloka đi kèm EXE, cơ chế chỉ booking mới check-in hôm nay, chống trùng, Excel 9 cột, F92, cấu hình, lịch sử và mốc UID. Đã kiểm tra bản in A4 Windows và cập nhật EXE thực tế.",
-  "signature": "bG1RyPp5gX0JPp3xOKOc5/mef+HnqdyoC8P+f+BkND9G/SfVfdHbpOPL8EAGRPr4IRy2L/gahDPpZdIgtIVnDw=="
+  "version": "1.7.19",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.19/Booking-Checkin-Hom-Nay-1.7.19.exe",
+  "sha256": "92df41f9d735c4828030c0ec28769d8e588b059168db559ff9a89f9fc3755416",
+  "size": 24823116,
+  "notes": "Thêm nguồn Trip như Agoda: chỉ báo booking mới check-in hôm nay, đầy đủ tên khách/hạng phòng/số phòng, chống trùng thư gốc và Reminder, ghi chú Excel Trip theo mẫu 9 cột cũ. Trip chỉ có hai nút lớn Sao chép và Đóng thông báo, không có in A4. Tích hợp nguyên bản âm thanh Trip được cung cấp thành 4-trip.mp3 cùng bản PCM của chính âm đó; thêm lựa chọn Trip mà không đặt lại âm riêng Agoda/Expedia/Traveloka hay thông tin đăng nhập. Giữ popup khi ẩn khay, F92, in Expedia/Traveloka, lịch sử, cấu hình, mốc UID; nâng parser chỉ đọc lại tối đa 20 thư gần nhất một lần và không báo lại booking đã đóng. Đã kiểm tra popup/Excel Windows và cập nhật EXE thực tế.",
+  "signature": "KNDfHe/b3prENHLYCvj0IBFWJrr9hv7xTKWWyPA8uiwyDEUkUXByM8MU+p8NpAIUEIPmjkmyFvx7ZA159AtkAw=="
 }
