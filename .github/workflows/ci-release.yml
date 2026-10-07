@@ -51,8 +51,10 @@ jobs:
         run: |
           $report = Join-Path $env:RUNNER_TEMP "booking-browser-smoke.json"
           $proc = Start-Process "dist/Booking-Checkin-Hom-Nay.exe" -ArgumentList @('--booking-browser-smoke', ('"' + $report + '"')) -Wait -PassThru
+          if (Test-Path $report) { Get-Content $report }
           if ($proc.ExitCode -ne 0) { throw "Frozen Booking.com browser check failed" }
-          if (!(Get-Content $report | ConvertFrom-Json).ok) { throw "Browser check did not complete" }
+          $result = Get-Content $report | ConvertFrom-Json
+          if (!$result.ok -or !$result.live_session_kept -or !$result.session_kept_after_window_close) { throw "Browser/session check did not complete" }
       - name: Verify packaged OTA and application restart
         run: python scripts/smoke_packaged_update.py dist/Booking-Checkin-Hom-Nay.exe
       - uses: actions/upload-artifact@v7.0.1
@@ -105,7 +107,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Tích hợp âm Booking.com từ file booking com.mp3 được cung cấp, giữ nguyên bản MP3 và kèm PCM của cùng bản ghi âm khi Windows không phát được MP3. Tự bổ sung mặc định Booking.com một lần, không thay âm Agoda/Expedia/Traveloka/Trip, âm chung hoặc lựa chọn riêng đã lưu. Giữ email/mật khẩu, hồ sơ đăng nhập Booking.com, lịch sử và mốc UID; không đổi parser hoặc quét lại thư để đổi âm. Popup chỉ phát âm đúng nguồn, không phát lại khi bổ sung chi tiết hoặc sao chép Excel; Đóng thông báo dừng âm. Giữ cơ chế chỉ báo booking mới check-in hôm nay, khay, F92, Excel 9 cột, in Expedia/Traveloka và OTA an toàn. Đã kiểm tra Windows, driver trình duyệt trong EXE và cập nhật EXE thực tế trên ba hồ sơ cũ." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Cải thiện phiên Booking.com: giữ cùng một trình duyệt chạy nền, tự ẩn sau khi xác nhận đăng nhập; thêm nút Ẩn trình duyệt giữ nguyên tab và phiên. Mở lại không khởi động lại trình duyệt hay đặt lại OTP đang nhập. Cửa sổ nền riêng giữ tiến trình/cookie phiên khi đóng cửa sổ Booking.com bằng X; ưu tiên nút Ẩn để giữ cả sessionStorage của tab. Lỗi đọc chi tiết tạm thời không đóng phiên; thử lại sau khoảng một phút. Không tự nhập OTP, không lưu bản sao token/cookie vào JSON, không can thiệp Chrome/Edge thường. Booking.com vẫn có thể yêu cầu OTP khi hết hạn/thu hồi phiên. Giữ 5 âm nguồn, popup/Excel/F92, lịch sử, cấu hình và UID; không đổi parser hoặc báo lặp. Đã kiểm tra giữ phiên trên Windows, đóng cửa sổ thật, phiên trong EXE và OTA trên ba hồ sơ cũ." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

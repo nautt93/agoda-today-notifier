@@ -532,13 +532,15 @@ class BookingNotifierApp:
         booking.pack(fill="x", pady=(0, 12))
         ttk.Checkbutton(booking, text="Tự bổ sung họ tên, phòng, ngày trả và tổng tiền từ Extranet",
                         variable=self.booking_com_enabled_var, style="Card.TCheckbutton").pack(anchor="w")
-        ttk.Label(booking, text="Đăng nhập/2FA một lần trên mỗi máy. App dùng hồ sơ riêng, không lấy mật khẩu từ Chrome thường.\nNếu phiên hết hạn, email vẫn báo booking hôm nay; chi tiết được bổ sung khi đăng nhập lại.",
+        ttk.Label(booking, text="Đăng nhập/OTP trong cửa sổ riêng của app; đăng nhập xong app tự ẩn và giữ phiên chạy nền.\nDùng “Ẩn trình duyệt” để giữ cả tab đăng nhập. Không cần giữ cửa sổ trên màn hình.\nBooking.com vẫn có thể yêu cầu OTP khi phiên hết hạn; email luôn báo booking hôm nay.",
                   style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(8, 10))
         row = ttk.Frame(booking, style="Card.TFrame")
         row.pack(fill="x")
         ttk.Combobox(row, textvariable=self.booking_com_browser_var, values=("auto", "msedge", "chrome"), state="readonly", width=10).pack(side="left")
         ttk.Button(row, name="booking_com_login", text="Đăng nhập Booking.com", command=self.login_booking_com,
                    style="Secondary.TButton").pack(side="left", padx=8)
+        ttk.Button(row, name="booking_com_background", text="Ẩn trình duyệt", command=self.background_booking_com,
+                   style="Secondary.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(row, text="Lấy lại chi tiết", command=self.refresh_booking_com, style="Secondary.TButton").pack(side="left")
         ttk.Label(booking, textvariable=self.booking_com_status_var, style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(10, 0))
 
@@ -795,6 +797,9 @@ class BookingNotifierApp:
     def refresh_booking_com(self) -> None:
         self._save_booking_com_preferences()
         self.booking_com_worker.wake(force=True)
+
+    def background_booking_com(self) -> None:
+        self.booking_com_worker.background()
 
     def test_connection(self) -> None:
         try:

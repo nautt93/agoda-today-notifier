@@ -155,6 +155,20 @@ def test_native_basic_and_enriched_popup_same_window_two_big_actions_no_second_s
         root.update()
         assert "Booking.com" in app.source_sound_entries
         assert app.booking_com_browser_var.get() == "auto"
+
+        def descendants(widget):
+            for child in widget.winfo_children():
+                yield child
+                yield from descendants(child)
+
+        hide = next(child for child in descendants(app.settings_window)
+                    if child.winfo_name() == "booking_com_background")
+        assert hide.cget("text") == "Ẩn trình duyệt"
+        background = Mock()
+        monkeypatch.setattr(app.booking_com_worker, "background", background)
+        hide.invoke()
+        background.assert_called_once_with()
+        assert app.active_popup is None and not app.sound_active
         screenshot("booking-com-settings.png", app.settings_window)
     finally:
         app.exit_app()
