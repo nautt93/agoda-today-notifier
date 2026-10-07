@@ -411,6 +411,7 @@ def packaged_browser_smoke(output: Path) -> int:
             ) + '<span data-test-id="reservation-overview-name">SYNTHETIC FULL GUEST</span>' + \
                 '<div class="res-room-title__name">Deluxe Room</div><div class="res-room-title__name">Deluxe Room</div></main>'
             client.context.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html; charset=utf-8", body=markup))
+            client.context.set_offline(True)  # Any request missed by routing must fail, not contact a real site.
             stage = "navigate"
             page.goto(event.details_url)
             stage = "parse"

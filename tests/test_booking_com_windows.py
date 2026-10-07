@@ -39,6 +39,7 @@ def test_installed_browser_real_selectors_hidden_print_excluded_full_multiroom_a
     try:
         client._launch()
         client.context.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html", body=markup))
+        client.context.set_offline(True)
         full = client.fetch(event)
         snapshot = client._page().evaluate(DETAIL_SNAPSHOT_JS)
         assert len(snapshot["fields"]) == 5 and all("Hoa hồng" not in pair[0] for pair in snapshot["fields"])
@@ -51,6 +52,7 @@ def test_installed_browser_real_selectors_hidden_print_excluded_full_multiroom_a
         client.close()
         client._launch()
         client.context.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html", body=markup))
+        client.context.set_offline(True)
         assert client.fetch(event).room_type == full.room_type
         assert client._page().evaluate("localStorage.getItem('synthetic-profile-check')") == "persisted"
         assert any(cookie["name"] == "synthetic-session" for cookie in client.context.cookies())

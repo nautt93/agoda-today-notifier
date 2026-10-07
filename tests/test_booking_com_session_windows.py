@@ -101,15 +101,23 @@ def test_native_headed_cookie_session_survives_hide_and_browser_x_then_handles_s
     markup = (Path(__file__).parent / "fixtures" / "booking_com_details.html").read_text(encoding="utf-8")
     markup = markup.replace("ARRIVAL", date.today().isoformat())
     markup = markup.replace("DEPARTURE", (date.today() + timedelta(days=2)).isoformat())
-    server = {"expired": False}
+    server = {"expired": False, "account_navigations": 0}
 
     def synthetic_response(route):
         host = urlsplit(route.request.url).hostname
         if host == "admin.booking.com" and server["expired"]:
-            route.fulfill(status=302, headers={"location": SIGN_IN_URL}, body="")
+            # HTTP redirect chains only invoke the route handler for their
+            # first URL. A document-initiated navigation is independently
+            # intercepted, so the account challenge remains wholly synthetic.
+            route.fulfill(status=200, content_type="text/html; charset=utf-8", body=(
+                '<!doctype html><meta charset="utf-8">'
+                f'<script>location.replace("{SIGN_IN_URL}");</script>'
+            ))
         elif host == "admin.booking.com":
             route.fulfill(status=200, content_type="text/html; charset=utf-8", body=markup)
         elif host == "account.booking.com":
+            if route.request.is_navigation_request():
+                server["account_navigations"] += 1
             route.fulfill(status=200, content_type="text/html; charset=utf-8", body=(
                 '<!doctype html><meta charset="utf-8"><title>Synthetic OTP</title>'
                 '<label>OTP <input name="otp" autocomplete="one-time-code"></label>'
@@ -122,6 +130,7 @@ def test_native_headed_cookie_session_survives_hide_and_browser_x_then_handles_s
         client._launch()  # Headed browser with separate hidden keeper window.
         context, keeper = client.context, client.keeper_page
         context.route("**/*", synthetic_response)
+        context.set_offline(True)  # Unmocked requests cannot escape to real services.
         pid = client._browser_pid()
         assert pid > 0 and keeper.url == "about:blank"
         assert context.browser.is_connected()
@@ -207,6 +216,7 @@ def test_native_headed_cookie_session_survives_hide_and_browser_x_then_handles_s
         assert COOKIE_VALUE not in str(failure.value) and "https://" not in str(failure.value)
         assert client.awaiting_login and client.context is context and client._browser_pid() == pid
         assert client.work_page is replacement and replacement.url == SIGN_IN_URL
+        assert server["account_navigations"] > 0, "Account challenge must be served by the synthetic route"
         replacement.locator('input[autocomplete="one-time-code"]').wait_for(state="visible", timeout=5000)
         assert replacement.locator('input[autocomplete="one-time-code"]').is_visible()
         navigation = []
