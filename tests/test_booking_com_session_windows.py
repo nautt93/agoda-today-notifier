@@ -207,6 +207,7 @@ def test_native_headed_cookie_session_survives_hide_and_browser_x_then_handles_s
         assert COOKIE_VALUE not in str(failure.value) and "https://" not in str(failure.value)
         assert client.awaiting_login and client.context is context and client._browser_pid() == pid
         assert client.work_page is replacement and replacement.url == SIGN_IN_URL
+        replacement.locator('input[autocomplete="one-time-code"]').wait_for(state="visible", timeout=5000)
         assert replacement.locator('input[autocomplete="one-time-code"]').is_visible()
         navigation = []
         replacement.on("framenavigated", lambda frame: navigation.append(frame.url)
