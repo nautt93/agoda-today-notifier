@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.20",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.20/Booking-Checkin-Hom-Nay-1.7.20.exe",
-  "sha256": "de125e01ec6c3caa992abf2f82fab067973e6c64c4e9c690d5618bb207bb5cdd",
-  "size": 64036926,
-  "notes": "Thêm Booking.com hai mức: email báo ngay booking mới check-in hôm nay; đăng nhập Extranet trong Cài đặt để tự bổ sung đủ họ tên, hạng/số phòng, ngày trả và tổng tiền vào cùng popup/lịch sử/Excel 9 cột cũ. Không báo lần hai khi bổ sung chi tiết hoặc nhận lại email. Booking.com có chuông riêng, có thể chọn MP3/WAV; giữ nguyên 4 âm nguồn cũ và cấu hình. Hồ sơ Edge/Chrome riêng chỉ lưu trên máy, không đóng gói tài khoản/cookie; hết phiên vẫn báo email. Không có in A4 cho Booking.com. Giữ khay, F92, in Expedia/Traveloka, OTA an toàn, lịch sử và mốc UID; parser p14 chỉ đọc lại tối đa 20 thư gần nhất một lần. Đã kiểm tra Windows, trình duyệt trong EXE và cập nhật EXE thực tế.",
-  "signature": "NUXsKwRU80AauIQr3Q+/+oY0ixop+yMXDaQ2s0NPR7qhaSfyBd8PfktIStUC/HGXF+GaVSs13EOCTm5Und7+Bw=="
+  "version": "1.7.21",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.21/Booking-Checkin-Hom-Nay-1.7.21.exe",
+  "sha256": "a8128d8be793bca6ca70fc061e715aff1b32defddbd0400f0367b75acb345db0",
+  "size": 64259997,
+  "notes": "Tích hợp âm Booking.com từ file booking com.mp3 được cung cấp, giữ nguyên bản MP3 và kèm PCM của cùng bản ghi âm khi Windows không phát được MP3. Tự bổ sung mặc định Booking.com một lần, không thay âm Agoda/Expedia/Traveloka/Trip, âm chung hoặc lựa chọn riêng đã lưu. Giữ email/mật khẩu, hồ sơ đăng nhập Booking.com, lịch sử và mốc UID; không đổi parser hoặc quét lại thư để đổi âm. Popup chỉ phát âm đúng nguồn, không phát lại khi bổ sung chi tiết hoặc sao chép Excel; Đóng thông báo dừng âm. Giữ cơ chế chỉ báo booking mới check-in hôm nay, khay, F92, Excel 9 cột, in Expedia/Traveloka và OTA an toàn. Đã kiểm tra Windows, driver trình duyệt trong EXE và cập nhật EXE thực tế trên ba hồ sơ cũ.",
+  "signature": "8lVUxpafTXSxOkdpAtzxBl6gauUHe9OH+ayuKQfueS5Fknj/DfdoSLpVmV9KwD0PqWc3ZK4DAXclwP2lkMgEAA=="
 }
