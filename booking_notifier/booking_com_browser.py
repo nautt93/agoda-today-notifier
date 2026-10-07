@@ -216,6 +216,7 @@ class BookingComWorker(threading.Thread):
 def packaged_browser_smoke(output: Path) -> int:
     """Verify the frozen driver/installed browser against synthetic DOM only."""
     client: BookingComBrowser | None = None
+    stage = "launch"
     try:
         with tempfile.TemporaryDirectory(prefix="booking-browser-smoke-") as scratch:
             client = BookingComBrowser(Path(scratch))
@@ -226,22 +227,24 @@ def packaged_browser_smoke(output: Path) -> int:
                                  details_url=canonical_details_url("https://admin.booking.com" +
                                      "/hotel/hoteladmin/extranet_ng/manage/booking.html?res_id=5550000001&hotel_id=12345"))
             # Route every request: this test cannot contact a real reservation.
-            markup = '<main id="main-content">' + ''.join(
+            markup = '<!doctype html><meta charset="utf-8"><main id="main-content">' + ''.join(
                 f'<p class="res-content__label">{label}</p><p class="res-content__info">{value}</p>'
                 for label, value in (("Mã số đặt phòng:", event.booking_id), ("Nhận phòng", today.isoformat()),
                                      ("Trả phòng", tomorrow.isoformat()), ("Tổng số căn", "2"), ("Tổng tiền phòng", "VND 800.000"))
             ) + '<span data-test-id="reservation-overview-name">SYNTHETIC FULL GUEST</span>' + \
                 '<div class="res-room-title__name">Deluxe Room</div><div class="res-room-title__name">Deluxe Room</div></main>'
-            client.context.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html", body=markup))
+            client.context.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html; charset=utf-8", body=markup))
+            stage = "navigate"
             page.goto(event.details_url)
+            stage = "parse"
             enriched = parse_booking_com_details(page.evaluate(DETAIL_SNAPSHOT_JS), event)
             assert enriched.guest_name == "SYNTHETIC FULL GUEST" and enriched.room_type == "Deluxe Room x2"
             assert enriched.total_revenue == "VND 800.000" and enriched.checkout_date == tomorrow
             atomic_json_write(output, {"ok": True, "driver": "playwright", "full_details": True})
             client.close()
             return 0
-    except Exception:
+    except Exception as exc:
         if client:
             client.close()
-        atomic_json_write(output, {"ok": False})
+        atomic_json_write(output, {"ok": False, "stage": stage, "error": type(exc).__name__})
         return 1

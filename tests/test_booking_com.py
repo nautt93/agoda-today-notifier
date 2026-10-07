@@ -58,7 +58,7 @@ def test_short_email_basic_alert_identity_arrival_and_no_secrets(tmp_path):
     assert state.register_today_confirmation(event, ("mail-1",), date.today())
     assert len(state.pending_for_date(date.today())) == 1 and len(state.booking_com_candidates(date.today())) == 1
     assert state.incomplete_confirmations(date.today()) == []  # No futile full-mailbox name lookup.
-    assert "synthetic-secret" not in state.path.read_text()
+    assert "synthetic-secret" not in state.path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("sender", ['"Booking.com" <x@booking.com.evil.invalid>', '"notify@booking.com" <x@evil.invalid>',
