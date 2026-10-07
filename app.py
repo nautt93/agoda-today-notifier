@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from booking_notifier.audio import (
+    SOURCE_SOUND_FILES,
     SOURCE_SOUND_KEYS,
     WindowsMciAudioPlayer,
     bundled_source_pcm,
@@ -20,6 +21,7 @@ from booking_notifier.audio import (
     configured_sound_paths,
     default_source_sound,
 )
+from booking_notifier.booking_com_browser import BookingComWorker
 from booking_notifier.config import (
     APP_DIR,
     APP_NAME,
@@ -123,6 +125,7 @@ class BookingNotifierApp:
         "expedia": "#2563A9",
         "traveloka": "#08869B",
         "trip": "#565FBC",
+        "booking.com": "#003B95",
         "header_text": "#F7F2E8",
     }
 
@@ -154,6 +157,7 @@ class BookingNotifierApp:
         self.active_revenue_var: tk.StringVar | None = None
         self.active_checkout_var: tk.StringVar | None = None
         self.active_nights_var: tk.StringVar | None = None
+        self.active_booking_details_var: tk.StringVar | None = None
         self.queued_ids: set[str] = set()
         self.sound_active = False
         self.sound_uses_file = False
@@ -179,6 +183,8 @@ class BookingNotifierApp:
                 LOGGER.exception("Cannot prepare built-in source sounds; alerts retain fallback audio")
         self.f92_worker = F92Worker(self.events, self.config)
         self.f92_worker.start()
+        self.booking_com_worker = BookingComWorker(self.events, self.state, self.config, APP_DIR / "booking-com-browser")
+        self.booking_com_worker.start()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Unmap>", self._on_main_unmap, add="+")
         self.tray.start()
@@ -306,7 +312,7 @@ class BookingNotifierApp:
             font=("Segoe UI Semibold", 21),
         ).pack(anchor="w")
         tk.Label(
-            brand_text, text="Agoda + Expedia + Traveloka + Trip  •  Chỉ báo khách đến hôm nay",
+            brand_text, text="Agoda · Expedia · Traveloka · Trip · Booking.com",
             bg=self.COLORS["primary"], fg="#BFC9D8", font=("Segoe UI", 9),
         ).pack(anchor="w", pady=(3, 0))
 
@@ -414,7 +420,7 @@ class BookingNotifierApp:
             "source": "Nguồn", "booking": "Mã booking", "guest": "Khách",
             "room": "Phòng", "checkin": "Check-in", "revenue": "Tổng thu",
         }
-        widths = {"source": 90, "booking": 135, "guest": 185, "room": 260, "checkin": 105, "revenue": 145}
+        widths = {"source": 105, "booking": 125, "guest": 185, "room": 255, "checkin": 105, "revenue": 145}
         for column in columns:
             self.history_tree.heading(column, text=headings[column])
             self.history_tree.column(column, width=widths[column], minwidth=60)
@@ -480,6 +486,9 @@ class BookingNotifierApp:
         self.f92_sound_var = tk.StringVar()
         self.f92_builtin_sound_var = tk.BooleanVar()
         self.update_source_var = tk.StringVar()
+        self.booking_com_enabled_var = tk.BooleanVar()
+        self.booking_com_browser_var = tk.StringVar()
+        self.booking_com_status_var = tk.StringVar(value="Email báo ngay. Đăng nhập Extranet riêng trên máy này để tự lấy đầy đủ chi tiết.")
 
         ttk.Label(content, text="Cấu hình vận hành", style="SectionTitle.TLabel").pack(anchor="w")
         ttk.Label(
@@ -517,6 +526,20 @@ class BookingNotifierApp:
                 preferences, text=text, variable=variable, style="Card.TCheckbutton",
             ).grid(row=index // 2, column=index % 2, sticky="w", padx=6, pady=5)
 
+        booking = ttk.LabelFrame(content, text="  Booking.com • Chi tiết đầy đủ  ", style="Section.TLabelframe", padding=(18, 14))
+        booking.pack(fill="x", pady=(0, 12))
+        ttk.Checkbutton(booking, text="Tự bổ sung họ tên, phòng, ngày trả và tổng tiền từ Extranet",
+                        variable=self.booking_com_enabled_var, style="Card.TCheckbutton").pack(anchor="w")
+        ttk.Label(booking, text="Đăng nhập/2FA một lần trên mỗi máy. App dùng hồ sơ riêng, không lấy mật khẩu từ Chrome thường.\nNếu phiên hết hạn, email vẫn báo booking hôm nay; chi tiết được bổ sung khi đăng nhập lại.",
+                  style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(8, 10))
+        row = ttk.Frame(booking, style="Card.TFrame")
+        row.pack(fill="x")
+        ttk.Combobox(row, textvariable=self.booking_com_browser_var, values=("auto", "msedge", "chrome"), state="readonly", width=10).pack(side="left")
+        ttk.Button(row, name="booking_com_login", text="Đăng nhập Booking.com", command=self.login_booking_com,
+                   style="Secondary.TButton").pack(side="left", padx=8)
+        ttk.Button(row, text="Lấy lại chi tiết", command=self.refresh_booking_com, style="Secondary.TButton").pack(side="left")
+        ttk.Label(booking, textvariable=self.booking_com_status_var, style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(10, 0))
+
         sounds = ttk.LabelFrame(content, text="  Âm thanh theo nguồn booking  ", style="Section.TLabelframe", padding=(18, 14))
         sounds.pack(fill="x", pady=(0, 12))
         self.sound_settings_frame = sounds
@@ -538,7 +561,7 @@ class BookingNotifierApp:
             preview = ttk.Button(row, text=f"Nghe thử {source}", command=lambda s=source: self.preview_source_sound(s), style="Secondary.TButton")
             preview.pack(side="left", padx=(8, 0))
             self.sound_preview_buttons[source] = preview
-        ttk.Label(sounds, text="Đã tích hợp: Agoda → 1-agoda.mp3; Expedia → 2-expedia.mp3;\nTraveloka → 3-traveloka.mp3; Trip → 4-trip.mp3 (âm thanh bạn cung cấp).\nĐể trống: dùng tệp tích hợp đúng nguồn. Có thể chọn tệp riêng; nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(0, 12))
+        ttk.Label(sounds, text="Đã tích hợp: Agoda → 1-agoda.mp3; Expedia → 2-expedia.mp3;\nTraveloka → 3-traveloka.mp3; Trip → 4-trip.mp3 (âm thanh bạn cung cấp).\nBooking.com dùng chuông riêng; bạn có thể chọn MP3/WAV. Nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(0, 12))
         ttk.Label(sounds, text="Âm thanh chung dự phòng (giữ cấu hình cũ)", style="Field.TLabel").pack(anchor="w", pady=(0, 5))
         common = ttk.Frame(sounds, style="Card.TFrame")
         common.pack(fill="x")
@@ -631,7 +654,9 @@ class BookingNotifierApp:
         self.scan_days_var.set(str(c["scan_days"]))
         self.sound_var.set(str(c["sound_file"]))
         for source, variable in self.source_sound_vars.items():
-            variable.set(str(c.get(f"{source.lower()}_sound_file", "")))
+            variable.set(str(c.get(SOURCE_SOUND_KEYS[source.lower()], "")))
+        self.booking_com_enabled_var.set(bool(c.get("booking_com_enrichment", True)))
+        self.booking_com_browser_var.set(str(c.get("booking_com_browser", "auto")))
         self.quiet_var.set(bool(c["quiet_hours_enabled"]))
         self.start_windows_var.set(bool(c["start_with_windows"]))
         self.start_minimized_var.set(bool(c["start_minimized"]))
@@ -654,7 +679,9 @@ class BookingNotifierApp:
             "sound_file": self.sound_var.get().strip(),
             "source_sound_pack": str(self.config.get("source_sound_pack", "")),
             "trip_sound_pack": str(self.config.get("trip_sound_pack", "")),
-            **{f"{source.lower()}_sound_file": variable.get().strip() for source, variable in self.source_sound_vars.items()},
+            **{SOURCE_SOUND_KEYS[source.lower()]: variable.get().strip() for source, variable in self.source_sound_vars.items()},
+            "booking_com_enrichment": self.booking_com_enabled_var.get(),
+            "booking_com_browser": self.booking_com_browser_var.get(),
             "quiet_hours_enabled": self.quiet_var.get(),
             "start_with_windows": self.start_windows_var.get(),
             "start_minimized": self.start_minimized_var.get(),
@@ -686,7 +713,7 @@ class BookingNotifierApp:
             return
         draft = {
             "sound_file": self.sound_var.get().strip(),
-            **{f"{s.lower()}_sound_file": v.get().strip() for s, v in self.source_sound_vars.items()},
+            **{SOURCE_SOUND_KEYS[s.lower()]: v.get().strip() for s, v in self.source_sound_vars.items()},
         }
         try:
             self._start_source_sound(source, draft)
@@ -709,6 +736,7 @@ class BookingNotifierApp:
             self.config_store.save(self.config)
             set_start_with_windows(bool(self.config["start_with_windows"]))
             self.f92_worker.configure(self.config)
+            self.booking_com_worker.configure(self.config)
             self._restore_f92_display()
             self.start_monitoring()
             self.log("Đã lưu cấu hình an toàn và khởi động theo dõi.")
@@ -748,6 +776,22 @@ class BookingNotifierApp:
             self.set_status("Đã yêu cầu quét ngay")
         else:
             self.save_and_start()
+
+    def _save_booking_com_preferences(self) -> None:
+        # Login must work even when IMAP settings are not yet filled in.
+        self.config["booking_com_enrichment"] = self.booking_com_enabled_var.get()
+        self.config["booking_com_browser"] = self.booking_com_browser_var.get()
+        self.config_store.save(self.config)
+        self.booking_com_worker.configure(self.config)
+
+    def login_booking_com(self, alert: BookingEvent | None = None) -> None:
+        self._save_booking_com_preferences()
+        self.booking_com_status_var.set("Đang mở cửa sổ đăng nhập Booking.com…")
+        self.booking_com_worker.login(alert)
+
+    def refresh_booking_com(self) -> None:
+        self._save_booking_com_preferences()
+        self.booking_com_worker.wake(force=True)
 
     def test_connection(self) -> None:
         try:
@@ -844,6 +888,12 @@ class BookingNotifierApp:
                 elif event_type == "history_changed":
                     self.refresh_history()
                     self._refresh_pending_details()
+                    self.booking_com_worker.wake()
+                elif event_type == "booking_com_status":
+                    self.booking_com_status_var.set(str(payload))
+                    self.log(str(payload))
+                    if self.active_alert and self.active_alert.source == "Booking.com" and self.active_booking_details_var:
+                        self.active_booking_details_var.set("Đã lấy đầy đủ chi tiết từ Extranet." if self.active_alert.details_loaded_at else str(payload))
                 elif event_type in {"expedia_print_ready", "booking_print_ready"}:
                     self.print_loading = False
                     alert, image, error = payload
@@ -1059,7 +1109,7 @@ class BookingNotifierApp:
             hero_text, text="KHÁCH ĐẾN HÔM NAY", bg=self.COLORS["primary"], fg="#BFC9D8",
             font=("Segoe UI Semibold", 9),
         ).pack(anchor="w")
-        self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or "Chưa đọc được tên khách")
+        self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or ("Chờ chi tiết khách" if alert.source == "Booking.com" else "Chưa đọc được tên khách"))
         self.active_room_var = tk.StringVar(master=popup, value=alert.room_type or "—")
         self.active_revenue_var = tk.StringVar(master=popup, value=alert.total_revenue or "—")
         self.active_checkout_var = tk.StringVar(
@@ -1125,6 +1175,10 @@ class BookingNotifierApp:
                 command=lambda selected=alert: self._request_source_print(selected),
                 style="Secondary.TButton", takefocus=True,
             ).pack(fill="x", ipady=8, pady=(0, 12))
+        if alert.source == "Booking.com":
+            self.active_booking_details_var = tk.StringVar(master=popup, value="Đã lấy đầy đủ chi tiết từ Extranet." if alert.details_loaded_at else "Email chỉ có mã/ngày đến. Đăng nhập trong Cài đặt để tự bổ sung chi tiết.")
+            tk.Label(footer, textvariable=self.active_booking_details_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
+                     wraplength=560, justify="left", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))
         actions = tk.Frame(footer, name="booking_actions", bg=self.COLORS["surface"])
         actions.pack(fill="x")
         actions.columnconfigure((0, 1), weight=1, uniform="popup_actions")
@@ -1200,14 +1254,15 @@ class BookingNotifierApp:
 
             source_config = {**config, "sound_file": ""}
             candidates = configured_sound_paths(source_config, source)
-            try:
-                candidates.append(bundled_source_sound(source, APP_DIR / "sounds"))
-            except Exception:
-                LOGGER.exception("Cannot prepare bundled %s MP3; continue with fallback audio", source)
-            try:
-                candidates.append(bundled_source_pcm(source, APP_DIR / "sounds"))
-            except Exception:
-                LOGGER.exception("Cannot prepare bundled %s PCM; continue with fallback audio", source)
+            if source.strip().lower() in SOURCE_SOUND_FILES:
+                try:
+                    candidates.append(bundled_source_sound(source, APP_DIR / "sounds"))
+                except Exception:
+                    LOGGER.exception("Cannot prepare bundled %s MP3; continue with fallback audio", source)
+                try:
+                    candidates.append(bundled_source_pcm(source, APP_DIR / "sounds"))
+                except Exception:
+                    LOGGER.exception("Cannot prepare bundled %s PCM; continue with fallback audio", source)
             candidates.extend(configured_sound_paths({"sound_file": config.get("sound_file", "")}, source))
             for path in dict.fromkeys(candidates):
                 if play_file(path):
@@ -1254,8 +1309,8 @@ class BookingNotifierApp:
     def copy_active_alert(self) -> None:
         if not self.active_alert:
             return
-        self._copy_alerts_to_clipboard([self.active_alert], "Đã sao chép booking sang Excel")
-        if hasattr(self, "copy_feedback_var"):
+        copied = self._copy_alerts_to_clipboard([self.active_alert], "Đã sao chép booking sang Excel")
+        if copied and hasattr(self, "copy_feedback_var"):
             self.copy_feedback_var.set("Đã sao chép • Mở Excel và nhấn Ctrl+V")
 
     def _refresh_pending_details(self) -> None:
@@ -1269,12 +1324,14 @@ class BookingNotifierApp:
             if saved is None or saved.checkin_date != alert.checkin_date:
                 continue
             changed = False
-            for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "subject", "sender", "received_at"):
+            for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "subject", "sender", "received_at", "details_url", "details_loaded_at"):
                 value = getattr(saved, field)
                 if value and value != getattr(alert, field):
                     setattr(alert, field, value)
                     changed = True
             if alert is self.active_alert and changed:
+                if getattr(self, "active_booking_details_var", None) is not None and alert.details_loaded_at:
+                    self.active_booking_details_var.set("Đã lấy đầy đủ chi tiết từ Extranet.")
                 if self.active_guest_var is not None:
                     self.active_guest_var.set(alert.guest_name or "Chưa đọc được tên khách")
                 if self.active_room_var is not None:
@@ -1317,6 +1374,7 @@ class BookingNotifierApp:
         self.active_revenue_var = None
         self.active_checkout_var = None
         self.active_nights_var = None
+        self.active_booking_details_var = None
         self.refresh_history()
         self._show_next_alert()
 
@@ -1529,11 +1587,17 @@ class BookingNotifierApp:
             self._copy_alerts_to_clipboard(alerts, label)
         return "break"
 
-    def _copy_alerts_to_clipboard(self, alerts: list[BookingEvent], status: str) -> None:
+    def _copy_alerts_to_clipboard(self, alerts: list[BookingEvent], status: str) -> bool:
+        if any(alert.source == "Booking.com" and not all((alert.guest_name, alert.room_type, alert.checkout_date, alert.total_revenue))
+               for alert in alerts):
+            messagebox.showinfo("Chưa đủ chi tiết Booking.com", "Email Booking.com này chỉ có mã/ngày đến. Hãy đăng nhập Booking.com trong Cài đặt và đợi lấy đủ chi tiết trước khi chép Excel.",
+                                parent=self.root)
+            return False
         self.root.clipboard_clear()
         self.root.clipboard_append(excel_tsv_rows(alerts))
         self.root.update_idletasks()
         self.set_status(status)
+        return True
 
     def set_status(self, value: str) -> None:
         self.status_var.set(value)
@@ -1606,10 +1670,17 @@ class BookingNotifierApp:
             self.monitor.stop()
             self.monitor.join(3)
         self.f92_worker.close(3)
+        # Let the owning worker close its profile/driver before OTA replaces us.
+        # No Tk or browser API is called from a different owning thread.
+        self.booking_com_worker.close(35)
         self.stop_sound()
         self.root.destroy()
 
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--booking-browser-smoke":
+        from booking_notifier.booking_com_browser import packaged_browser_smoke
+
+        return packaged_browser_smoke(Path(sys.argv[2]))
     helper_result = run_update_helper_from_argv(sys.argv)
     if helper_result is not None:
         return helper_result

@@ -93,7 +93,8 @@ def test_original_bundled_sound_assets_match_recorded_metadata():
         "trip": "e998ab377bfb81d68bed847045a5c8135cdca94da15a5f46dc997d3ab6cd07e4",
     }
     assert SOURCE_SOUND_SHA256 == expected_hashes
-    assert set(SOURCE_SOUND_FILES) == set(SOURCE_SOUND_KEYS) == set(SOURCE_PCM_FILES) == set(SOURCE_PCM_SHA256) == set(expected_hashes)
+    assert set(SOURCE_SOUND_FILES) == set(SOURCE_PCM_FILES) == set(SOURCE_PCM_SHA256) == set(expected_hashes)
+    assert set(SOURCE_SOUND_KEYS) == {*expected_hashes, "booking.com"}
     assert set(metadata["sounds"]) == set(SOURCE_NAMES)
     assert metadata["audio_format"] == "MPEG Layer III"
     assert metadata["channels"] == 1 and metadata["sample_rate_hz"] == 44100

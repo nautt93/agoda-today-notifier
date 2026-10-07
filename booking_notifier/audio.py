@@ -15,6 +15,7 @@ SOURCE_SOUND_KEYS = {
     "expedia": "expedia_sound_file",
     "traveloka": "traveloka_sound_file",
     "trip": "trip_sound_file",
+    "booking.com": "booking_com_sound_file",
 }
 SOURCE_SOUND_FILES = {"agoda": "1-agoda.mp3", "expedia": "2-expedia.mp3", "traveloka": "3-traveloka.mp3", "trip": "4-trip.mp3"}
 SOURCE_SOUND_PACK = "hotel-mp3-v1"
@@ -37,6 +38,7 @@ CHIME_NOTES = {
     "expedia": (523.25, 659.25, 783.99),
     "traveloka": (783.99, 659.25, 523.25),
     "trip": (880.0, 523.25, 783.99, 659.25),
+    "booking.com": (523.25, 783.99, 880.0, 523.25),
 }
 SAMPLE_RATE = 22050
 

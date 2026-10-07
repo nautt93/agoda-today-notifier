@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.19"
+APP_VERSION = "1.7.20"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -34,8 +34,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "expedia_sound_file": "",
     "traveloka_sound_file": "",
     "trip_sound_file": "",
+    "booking_com_sound_file": "",
     "source_sound_pack": "",
     "trip_sound_pack": "",
+    "booking_com_enrichment": True,
+    "booking_com_browser": "auto",
     "f92_enabled": True,
     "f92_port": "AUTO",
     "f92_sound_index": 4,

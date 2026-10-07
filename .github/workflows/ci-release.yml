@@ -35,8 +35,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
+  build:
     needs: test
     runs-on: windows-latest
     steps:
@@ -47,8 +46,36 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-build.txt
       - run: pyinstaller --noconfirm --clean BookingNotifier.spec
+      - name: Verify packaged Booking.com browser driver
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "booking-browser-smoke.json"
+          $proc = Start-Process "dist/Booking-Checkin-Hom-Nay.exe" -ArgumentList @('--booking-browser-smoke', ('"' + $report + '"')) -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "Frozen Booking.com browser check failed" }
+          if (!(Get-Content $report | ConvertFrom-Json).ok) { throw "Browser check did not complete" }
       - name: Verify packaged OTA and application restart
         run: python scripts/smoke_packaged_update.py dist/Booking-Checkin-Hom-Nay.exe
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: verified-windows-exe
+          path: dist/Booking-Checkin-Hom-Nay.exe
+          retention-days: 7
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: python -m pip install -r requirements-build.txt
+      - uses: actions/download-artifact@v8
+        with:
+          name: verified-windows-exe
+          path: dist
       - name: Name release asset
         shell: pwsh
         run: |
@@ -78,7 +105,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Thêm nguồn Trip như Agoda: chỉ báo booking mới check-in hôm nay, đầy đủ tên khách/hạng phòng/số phòng, chống trùng thư gốc và Reminder, ghi chú Excel Trip theo mẫu 9 cột cũ. Trip chỉ có hai nút lớn Sao chép và Đóng thông báo, không có in A4. Tích hợp nguyên bản âm thanh Trip được cung cấp thành 4-trip.mp3 cùng bản PCM của chính âm đó; thêm lựa chọn Trip mà không đặt lại âm riêng Agoda/Expedia/Traveloka hay thông tin đăng nhập. Giữ popup khi ẩn khay, F92, in Expedia/Traveloka, lịch sử, cấu hình, mốc UID; nâng parser chỉ đọc lại tối đa 20 thư gần nhất một lần và không báo lại booking đã đóng. Đã kiểm tra popup/Excel Windows và cập nhật EXE thực tế." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Thêm Booking.com hai mức: email báo ngay booking mới check-in hôm nay; đăng nhập Extranet trong Cài đặt để tự bổ sung đủ họ tên, hạng/số phòng, ngày trả và tổng tiền vào cùng popup/lịch sử/Excel 9 cột cũ. Không báo lần hai khi bổ sung chi tiết hoặc nhận lại email. Booking.com có chuông riêng, có thể chọn MP3/WAV; giữ nguyên 4 âm nguồn cũ và cấu hình. Hồ sơ Edge/Chrome riêng chỉ lưu trên máy, không đóng gói tài khoản/cookie; hết phiên vẫn báo email. Không có in A4 cho Booking.com. Giữ khay, F92, in Expedia/Traveloka, OTA an toàn, lịch sử và mốc UID; parser p14 chỉ đọc lại tối đa 20 thư gần nhất một lần. Đã kiểm tra Windows, trình duyệt trong EXE và cập nhật EXE thực tế." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

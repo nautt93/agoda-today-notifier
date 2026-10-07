@@ -11,7 +11,7 @@ from .config import STATE_PATH, atomic_json_write
 from .models import BOOKING_SOURCES, BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent, booking_storage_id
 
 STATE_SCHEMA = 5
-PARSER_STATE_VERSION = "p13"
+PARSER_STATE_VERSION = "p14"
 
 
 def _now() -> str:
@@ -160,6 +160,12 @@ class StateStore:
             else:
                 old_checkin_text = str(existing.get("checkin_date", ""))
                 incoming = event.to_dict()
+                if (event.source == "Booking.com" and existing.get("details_loaded_at")
+                        and existing.get("checkin_date") == incoming.get("checkin_date")):
+                    # A repeated short email cannot erase authenticated details.
+                    for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "details_url", "details_loaded_at"):
+                        if existing.get(field):
+                            incoming[field] = existing[field]
                 if _trip_original_has_priority(existing, incoming):
                     # The original has an explicit net payout and richer room
                     # plan; the reminder may only contain the guest's total.
@@ -253,7 +259,7 @@ class StateStore:
                 current = str(record.get(field, "")).strip()
                 if incoming and (prefer_original or not current or len(incoming) > len(current)):
                     record[field] = incoming
-            for field in ("total_revenue", "checkout_date", "subject", "sender", "received_at"):
+            for field in ("total_revenue", "checkout_date", "subject", "sender", "received_at", "details_url", "details_loaded_at"):
                 if (prefer_original or not record.get(field)) and booking.get(field):
                     record[field] = booking[field]
 
@@ -264,7 +270,7 @@ class StateStore:
         for record in self.data["pending_alerts"]:
             if self._record_storage_id(record) != storage_id:
                 continue
-            for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "subject", "sender", "received_at"):
+            for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "subject", "sender", "received_at", "details_url", "details_loaded_at"):
                 if booking.get(field):
                     record[field] = booking[field]
 
@@ -302,7 +308,8 @@ class StateStore:
             records = list(self.data["bookings"].values()) + self.data["history"] + self.data["pending_alerts"]
             candidates: dict[str, dict[str, Any]] = {}
             for record in records:
-                if (record.get("checkin_date") != today.isoformat()
+                if (str(record.get("source", "")).lower() == "booking.com"
+                        or record.get("checkin_date") != today.isoformat()
                         or record.get("status") in {"cancelled", "modified"}
                         or not record.get("booking_id")
                         or str(record.get("source", "Agoda")).lower() not in {source.lower() for source in BOOKING_SOURCES}):
@@ -325,6 +332,66 @@ class StateStore:
             if changed:
                 self.data["processed_keys"] = existing[-20000:]
                 self._save_locked()
+
+    def booking_com_candidates(self, today: date, limit: int = 20) -> list[BookingEvent]:
+        """Only enrich known arrivals today, including already closed notifications."""
+        with self.lock:
+            records = {self._record_storage_id(record): record for record in
+                       [*self.data["history"], *self.data["pending_alerts"], *self.data["bookings"].values()]}
+            candidates: dict[str, BookingEvent] = {}
+            for record in records.values():
+                if (str(record.get("source", "")).lower() != "booking.com"
+                        or record.get("checkin_date") != today.isoformat()
+                        or record.get("status") in {"cancelled", "modified"}):
+                    continue
+                try:
+                    event = BookingEvent.from_dict(record)
+                except (TypeError, ValueError):
+                    continue
+                # The state cache uses "active"; browser enrichment is a NEW
+                # confirmation, not a booking lifecycle change.
+                event.status = BOOKING_STATUS_NEW
+                if not event.details_url:
+                    continue
+                if event.details_loaded_at and all((event.guest_name, event.room_type, event.total_revenue, event.checkout_date)):
+                    candidates.pop(event.storage_id, None)
+                else:
+                    candidates[event.storage_id] = event
+            return list(candidates.values())[-max(0, limit):] if limit > 0 else []
+
+    def enrich_booking_com(self, event: BookingEvent, today: date) -> bool:
+        """Update exact known ID/stay only; never create or replay a notification."""
+        if (event.source != "Booking.com" or event.status != BOOKING_STATUS_NEW
+                or event.checkin_date != today or not event.details_loaded_at):
+            return False
+        from .booking_com import canonical_details_url
+
+        safe = canonical_details_url(event.details_url, event.booking_id)
+        if not safe or safe != event.details_url:
+            return False
+        with self.lock:
+            current = self.data["bookings"].get(event.storage_id, {})
+            if current.get("status") in {"cancelled", "modified"}:
+                return False
+            records = [*self.data["history"], *self.data["pending_alerts"], *self.data["bookings"].values()]
+            changed = False
+            for record in records:
+                if (self._record_storage_id(record) != event.storage_id
+                        or record.get("checkin_date") != today.isoformat()
+                        or record.get("status") in {"cancelled", "modified"}
+                        or canonical_details_url(str(record.get("details_url", "")), event.booking_id) != safe):
+                    continue
+                for field in ("guest_name", "room_type", "total_revenue", "details_url", "details_loaded_at"):
+                    value = getattr(event, field)
+                    if value and record.get(field) != value:
+                        record[field] = value
+                        changed = True
+                if event.checkout_date and record.get("checkout_date") != event.checkout_date.isoformat():
+                    record["checkout_date"] = event.checkout_date.isoformat()
+                    changed = True
+            if changed:
+                self._save_locked()
+            return changed
 
     def pending_for_date(self, today: date) -> list[BookingEvent]:
         result: list[BookingEvent] = []

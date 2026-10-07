@@ -23,6 +23,7 @@ TRUSTED_DOMAINS = {
     "Expedia": ("expedia.com", "expediagroup.com", "expediapartnercentral.com"),
     "Traveloka": ("traveloka.com",),
     "Trip": ("trip.com",),
+    "Booking.com": ("booking.com",),
 }
 
 CHECKIN_LABELS = (
@@ -1076,6 +1077,10 @@ def parse_booking_message(message: Message) -> BookingEvent | None:
     source = sender_source(sender_header)
     if not source:
         return None
+    if source == "Booking.com":
+        from .booking_com import parse_booking_com_email
+
+        return parse_booking_com_email(message)
     if is_traveloka_payment_notice(message):
         # Payment receipts may quote confirmation text and a stay/guest/VCC.
         # They enrich an explicitly requested printout, never create an alert.

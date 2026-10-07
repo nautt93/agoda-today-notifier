@@ -50,6 +50,16 @@
 
 ## Cài đặt
 
+### Booking.com — hai mức từ v1.7.20
+
+- **Email:** nhận thư đặt phòng mới từ Booking.com, chỉ báo check-in hôm nay. Mẫu thư ngắn chỉ có mã/ngày đến nên popup chưa thể có tên/phòng ngay. Không báo hủy/chỉnh sửa/ngày khác, không đặt lịch nhắc cho booking tương lai.
+- **Chi tiết đầy đủ:** vào **Cài đặt → Cấu hình → Booking.com → Đăng nhập Booking.com**, đăng nhập/2FA trong cửa sổ Edge/Chrome của app trên máy lễ tân. Chọn `auto` (Edge, sau đó Chrome), `msedge` hoặc `chrome`. Không cần cài thêm gói trình duyệt của Playwright; máy cần có Edge hoặc Chrome. Có thể tắt tự bổ sung để chỉ dùng email.
+- Đã đối chiếu bộ chọn trường với trang Extranet thật. App chỉ đọc booking đã biết đến hôm nay, kiểm tra mã booking/chỗ nghỉ/ngày đến; lấy đầy đủ tên khách, từng hạng và số căn, ngày trả và **tổng tiền phòng như Extranet hiển thị** (không lấy hoa hồng hoặc tự trừ hoa hồng). Nếu không xác định được phân bổ nhiều hạng phòng thì giữ thông báo cơ bản, không tự đoán.
+- Chi tiết cập nhật ngay trên **cùng popup**, hàng chờ, lịch sử, F92 và Excel; không phát lại âm thanh/báo lần hai. Excel vẫn mẫu 9 cột cũ, ghi chú `Booking.com + hạng phòng + số lượng`; nếu chưa đủ chi tiết thì nhắc đăng nhập thay vì chép một dòng thiếu tên/phòng. Popup có hai nút lớn Sao chép/Đóng thông báo; không có in A4. Booking.com dùng chuông WAV riêng hoặc MP3/WAV tùy chọn, không thay 4 bản ghi âm cũ.
+- Phiên trình duyệt riêng ở `%APPDATA%\AgodaTodayNotifier\booking-com-browser`; không sao chép từ Chrome thường, không đưa tài khoản/cookie/email khách vào EXE/GitHub hoặc lưu token trong state/log. Hồ sơ chỉ nằm trên máy và được giữ khi OTA. Bảo vệ tài khoản Windows/thư mục này; không chia sẻ/sao chép hồ sơ đăng nhập cho người khác.
+- Khi hết phiên/Booking.com yêu cầu xác minh hoặc thay đổi bố cục, email **vẫn báo ngay**, chi tiết có thể chưa đầy đủ. Đăng nhập lại rồi chọn **Lấy lại chi tiết**; app không nhập mật khẩu, xử lý CAPTCHA hay thay đổi đặt phòng. Có thử lại sau 15 phút khi tra chi tiết lỗi. Đăng nhập trên Mac không chuyển sang máy Windows; cần đăng nhập riêng lần đầu trên từng máy.
+- Parser p14 chỉ đọc lại tối đa 20 thư gần nhất một lần khi nâng cấp, giữ lịch sử/cấu hình/mốc UID và dấu đã đóng. Bộ kiểm thử Windows kiểm tra popup/clipboard, bộ chọn DOM và hồ sơ trình duyệt, driver trong EXE, OTA với hai hồ sơ cũ trước khi phát hành.
+
 Tải file `.exe` mới nhất tại [Releases](https://github.com/nautt93/agoda-today-notifier/releases). Với Gmail, Yahoo hoặc iCloud, hãy dùng **mật khẩu ứng dụng**, không dùng mật khẩu tài khoản chính.
 
 Người đang dùng bản v1.5.5 từ repo cũ cần cài v1.6.0 thủ công một lần. Từ v1.6.0, OTA mặc định chuyển hoàn toàn sang repo `nautt93`.

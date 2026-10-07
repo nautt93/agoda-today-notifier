@@ -345,7 +345,7 @@ def test_source_sound_settings_preview_and_popup_queue_in_tray(tmp_path, monkeyp
         root.update()
         app.settings_canvas.yview_moveto(0.45)
         root.update()
-        assert set(app.source_sound_vars) == {"Agoda", "Expedia", "Traveloka", "Trip"}
+        assert set(app.source_sound_vars) == {"Agoda", "Expedia", "Traveloka", "Trip", "Booking.com"}
         for source in app.source_sound_vars:
             assert app.sound_preview_buttons[source].cget("text") == f"Nghe thử {source}"
             assert app.sound_choose_buttons[source].cget("text") == "Chọn tệp"

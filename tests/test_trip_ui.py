@@ -119,7 +119,7 @@ def test_trip_popup_hidden_main_has_only_two_large_buttons_copy_keeps_exact_mp3_
             root.update()
             time.sleep(0.02)
         assert app.tray.available and app.tray.icon.visible
-        assert set(app.source_sound_vars) == {"Agoda", "Expedia", "Traveloka", "Trip"}
+        assert set(app.source_sound_vars) == {"Agoda", "Expedia", "Traveloka", "Trip", "Booking.com"}
         assert app.config["trip_sound_pack"] == store.load()["trip_sound_pack"] == TRIP_SOUND_PACK
         path = Path(app.config["trip_sound_file"])
         assert path.name == "4-trip.mp3" and path.is_file()

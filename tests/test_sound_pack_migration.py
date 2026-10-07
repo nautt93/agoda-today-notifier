@@ -164,6 +164,8 @@ def test_saving_settings_preserves_both_pack_markers_and_all_four_sound_choices(
                  "quiet": "quiet_hours_enabled", "start_windows": "start_with_windows", "start_minimized": "start_minimized",
                  "f92_enabled": "f92_enabled", "f92_port": "f92_port", "f92_sound": "f92_sound_index",
                  "f92_builtin_sound": "f92_builtin_sound_enabled", "update_source": "update_manifest_source"}
+    app.booking_com_enabled_var = Mock(get=Mock(return_value=True))
+    app.booking_com_browser_var = Mock(get=Mock(return_value="auto"))
     for variable, key in variables.items():
         setattr(app, f"{variable}_var", Mock(get=Mock(return_value=str(config[key]) if key not in {
             "quiet_hours_enabled", "start_with_windows", "start_minimized", "f92_enabled", "f92_builtin_sound_enabled"} else config[key])))
