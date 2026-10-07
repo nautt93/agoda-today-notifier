@@ -219,6 +219,7 @@ def test_native_booking_pending_mute_in_place_ready_copy_and_next_source(tmp_pat
         assert app.active_popup is popup and app.active_alert is active
         assert app.active_guest_var.get() == full.guest_name and app.active_room_var.get() == full.room_type
         assert copy.instate(["!disabled"]) and app.active_copy_button is copy
+        assert app.copy_feedback_var.get() == "Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel"
         assert app.active_sound_muted and not app.sound_active and send.call_count == muted_calls
         assert not state.is_acknowledged(active) and len(app.alert_queue) == 1
         assert app.f92_worker.notify.call_args.kwargs == {"play_sound": False}

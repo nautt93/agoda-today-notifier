@@ -1244,6 +1244,7 @@ class BookingNotifierApp:
                 for widget in row.winfo_children():
                     widget.bind("<MouseWheel>", scroll_details)
             details_canvas.bind("<MouseWheel>", scroll_details)
+            info_card.bind("<MouseWheel>", scroll_details)
 
         if alert.source == "Booking.com":
             status_card = tk.Frame(footer, name="booking_status", bg=self.COLORS["surface_alt"],
@@ -1482,6 +1483,9 @@ class BookingNotifierApp:
         menu = getattr(self, "active_menu", None)
         if menu is not None:
             menu.entryconfigure(0, state="normal" if state.ready else "disabled")
+        feedback = getattr(self, "copy_feedback_var", None)
+        if state.ready and feedback is not None and feedback.get() == "Sao chép sẽ mở khi đã lấy đủ thông tin booking.":
+            feedback.set("Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
         self._fit_popup_guest_header()
 
     def _refresh_pending_details(self) -> None:

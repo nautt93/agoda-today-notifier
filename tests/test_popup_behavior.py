@@ -224,6 +224,17 @@ def test_popup_disabled_config_gives_honest_enable_guidance_not_other_id_or_raw_
     instance.state.acknowledge.assert_not_called()
 
 
+def test_ready_popup_replaces_stale_disabled_copy_hint_without_clearing_success_feedback():
+    instance = popup_app(complete_event())
+    instance.copy_feedback_var.get.return_value = "Sao chép sẽ mở khi đã lấy đủ thông tin booking."
+    instance._refresh_booking_popup_state()
+    instance.copy_feedback_var.set.assert_called_once_with("Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
+    instance.copy_feedback_var.reset_mock()
+    instance.copy_feedback_var.get.return_value = "Đã sao chép • Mở Excel và nhấn Ctrl+V"
+    instance._refresh_booking_popup_state()
+    instance.copy_feedback_var.set.assert_not_called()
+
+
 def test_popup_without_details_link_is_unavailable_not_automatically_loading_or_retrying():
     event = replace(complete_event(), room_type="", details_url="")
     instance = popup_app(event)
