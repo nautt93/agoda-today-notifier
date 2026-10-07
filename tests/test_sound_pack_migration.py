@@ -10,6 +10,7 @@ import app as desktop
 from app import BookingNotifierApp
 from booking_notifier import audio
 from booking_notifier.audio import (
+    BOOKING_COM_SOUND_PACK,
     SOURCE_SOUND_FILES,
     SOURCE_SOUND_KEYS,
     SOURCE_SOUND_PACK,
@@ -19,13 +20,14 @@ from booking_notifier.audio import (
 from booking_notifier.config import DEFAULT_CONFIG, ConfigStore
 
 
-def test_fresh_install_without_configuration_installs_both_packs_and_all_four_sounds(tmp_path):
+def test_fresh_install_without_configuration_installs_three_packs_and_all_five_sounds(tmp_path):
     store = ConfigStore(tmp_path / "config.json")
     assert not store.path.exists()
     installed = store.install_source_sound_pack(tmp_path / "sounds")
     assert installed == store.load()
     assert installed["source_sound_pack"] == SOURCE_SOUND_PACK
     assert installed["trip_sound_pack"] == TRIP_SOUND_PACK
+    assert installed["booking_com_sound_pack"] == BOOKING_COM_SOUND_PACK
     for source, filename in SOURCE_SOUND_FILES.items():
         path = tmp_path / "sounds" / filename
         assert installed[SOURCE_SOUND_KEYS[source]] == str(path)
@@ -54,6 +56,7 @@ def test_new_sound_pack_replaces_old_choices_once_without_changing_credentials(t
     # Once applied, an intentional later custom source choice survives restarts.
     installed["agoda_sound_file"] = str(tmp_path / "my-custom.mp3")
     installed["trip_sound_file"] = str(tmp_path / "my-trip-custom.wav")
+    installed["booking_com_sound_file"] = str(tmp_path / "my-booking-com-custom.mp3")
     store.save(installed)
     assert store.install_source_sound_pack(tmp_path / "sounds") == installed
 
@@ -85,7 +88,7 @@ def test_pcm_pack_failure_does_not_commit_partial_mapping(tmp_path, monkeypatch)
 @pytest.mark.parametrize("explicit_trip", ["", "my-trip-custom.mp3"])
 def test_upgrade_from_three_source_pack_defaults_only_trip_and_preserves_custom_choices(tmp_path, monkeypatch, explicit_trip):
     store = ConfigStore(tmp_path / "config.json")
-    store.save({"source_sound_pack": SOURCE_SOUND_PACK,
+    store.save({"source_sound_pack": SOURCE_SOUND_PACK, "booking_com_sound_pack": BOOKING_COM_SOUND_PACK,
                 "agoda_sound_file": "custom-agoda.wav", "expedia_sound_file": "custom-expedia.mp3", "traveloka_sound_file": "custom-traveloka.wav",
                 "trip_sound_file": explicit_trip, "sound_file": "custom-common.wav",
                 "email_address": "hotel@example.invalid", "password_encrypted": "unchanged-encrypted-secret",
@@ -119,15 +122,19 @@ def test_upgrade_from_three_source_pack_defaults_only_trip_and_preserves_custom_
     assert mp3_install.call_count == pcm_install.call_count == 1
 
 
-def test_fresh_pack_installation_preserves_an_explicit_trip_override(tmp_path):
+def test_fresh_pack_installation_preserves_explicit_trip_and_booking_com_overrides(tmp_path):
     store = ConfigStore(tmp_path / "config.json")
-    store.save({"trip_sound_file": "my-own-trip-recording.wav"})
+    store.save({"trip_sound_file": "my-own-trip-recording.wav", "booking_com_sound_file": "my-own-booking-com.wav"})
     installed = store.install_source_sound_pack(tmp_path / "sounds")
     assert installed["source_sound_pack"] == SOURCE_SOUND_PACK
     assert installed["trip_sound_pack"] == TRIP_SOUND_PACK
     assert installed["trip_sound_file"] == "my-own-trip-recording.wav"
+    assert installed["booking_com_sound_pack"] == BOOKING_COM_SOUND_PACK
+    assert installed["booking_com_sound_file"] == "my-own-booking-com.wav"
     assert (tmp_path / "sounds" / SOURCE_SOUND_FILES["trip"]).is_file()
     assert (tmp_path / "sounds" / audio.SOURCE_PCM_FILES["trip"]).is_file()
+    assert (tmp_path / "sounds" / SOURCE_SOUND_FILES["booking.com"]).is_file()
+    assert (tmp_path / "sounds" / audio.SOURCE_PCM_FILES["booking.com"]).is_file()
 
 
 @pytest.mark.parametrize("legacy_installed", [False, True])
@@ -154,9 +161,11 @@ def test_trip_preparation_failure_commits_neither_marker_nor_partial_choices(tmp
     assert store.load()["trip_sound_pack"] == ""
 
 
-def test_saving_settings_preserves_both_pack_markers_and_all_four_sound_choices(tmp_path, monkeypatch):
-    config = {**DEFAULT_CONFIG, "source_sound_pack": SOURCE_SOUND_PACK, "trip_sound_pack": TRIP_SOUND_PACK, "email_address": "test@example.invalid",
-              "agoda_sound_file": "custom-a.mp3", "expedia_sound_file": "custom-e.wav", "traveloka_sound_file": "custom-t.mp3", "trip_sound_file": "custom-trip.wav"}
+def test_saving_settings_preserves_all_pack_markers_and_all_five_sound_choices(tmp_path, monkeypatch):
+    config = {**DEFAULT_CONFIG, "source_sound_pack": SOURCE_SOUND_PACK, "trip_sound_pack": TRIP_SOUND_PACK,
+              "booking_com_sound_pack": BOOKING_COM_SOUND_PACK, "email_address": "test@example.invalid",
+              "agoda_sound_file": "custom-a.mp3", "expedia_sound_file": "custom-e.wav", "traveloka_sound_file": "custom-t.mp3",
+              "trip_sound_file": "custom-trip.wav", "booking_com_sound_file": "custom-b.mp3"}
     app = BookingNotifierApp.__new__(BookingNotifierApp)
     app.config = config
     variables = {"provider": "provider", "host": "imap_host", "port": "imap_port", "email": "email_address",
@@ -176,5 +185,67 @@ def test_saving_settings_preserves_both_pack_markers_and_all_four_sound_choices(
     store.save(collected)
     assert collected["source_sound_pack"] == SOURCE_SOUND_PACK
     assert collected["trip_sound_pack"] == TRIP_SOUND_PACK
+    assert collected["booking_com_sound_pack"] == BOOKING_COM_SOUND_PACK
     assert store.install_source_sound_pack(tmp_path / "sounds") == store.load()
     assert all(store.load()[key] == config[key] for key in SOURCE_SOUND_KEYS.values())
+
+
+@pytest.mark.parametrize("explicit_booking_com", ["", "my-booking-com-custom.mp3"])
+def test_upgrade_from_v20_defaults_only_booking_com_and_keeps_four_sources_and_profile(tmp_path, monkeypatch, explicit_booking_com):
+    store = ConfigStore(tmp_path / "config.json")
+    store.save({"source_sound_pack": SOURCE_SOUND_PACK, "trip_sound_pack": TRIP_SOUND_PACK,
+                "agoda_sound_file": "custom-agoda.wav", "expedia_sound_file": "custom-expedia.mp3",
+                "traveloka_sound_file": "custom-traveloka.wav", "trip_sound_file": "custom-trip.mp3",
+                "booking_com_sound_file": explicit_booking_com, "sound_file": "custom-common.wav",
+                "email_address": "hotel@example.invalid", "password_encrypted": "unchanged-encrypted-secret",
+                "booking_com_browser": "chrome", "booking_com_enrichment": False,
+                "update_manifest_source": "https://example.invalid/custom-update.json", "f92_port": "COM8"})
+    previous = store.load()
+    profile = tmp_path / "booking-com-browser" / "synthetic-profile-marker"
+    profile.parent.mkdir()
+    profile.write_bytes(b"not-real-cookies; preserved-profile")
+    mp3_install = Mock(wraps=audio.bundled_source_sound)
+    pcm_install = Mock(wraps=audio.bundled_source_pcm)
+    monkeypatch.setattr(audio, "bundled_source_sound", mp3_install)
+    monkeypatch.setattr(audio, "bundled_source_pcm", pcm_install)
+    installed = store.install_source_sound_pack(tmp_path / "sounds")
+    assert installed["booking_com_sound_pack"] == BOOKING_COM_SOUND_PACK == "booking-com-mp3-v1"
+    assert installed["booking_com_sound_file"] == (explicit_booking_com or str(tmp_path / "sounds" / "5-booking-com.mp3"))
+    for key in DEFAULT_CONFIG:
+        if key not in {"booking_com_sound_file", "booking_com_sound_pack"}:
+            assert installed[key] == previous[key]
+    mp3_install.assert_called_once_with("Booking.com", tmp_path / "sounds")
+    pcm_install.assert_called_once_with("Booking.com", tmp_path / "sounds")
+    assert {p.name for p in (tmp_path / "sounds").iterdir()} == {"5-booking-com.mp3", "5-booking-com-pcm.wav"}
+    assert profile.read_bytes() == b"not-real-cookies; preserved-profile"
+    installed["booking_com_sound_file"] = "later-changed-booking-com.wav"
+    store.save(installed)
+    original = store.path.read_bytes()
+    assert store.install_source_sound_pack(tmp_path / "sounds") == installed
+    assert store.path.read_bytes() == original
+    assert mp3_install.call_count == pcm_install.call_count == 1
+
+
+@pytest.mark.parametrize("older_packs_installed", [False, True])
+@pytest.mark.parametrize("failed_helper", ["bundled_source_sound", "bundled_source_pcm"])
+def test_booking_com_preparation_failure_does_not_commit_any_pending_migration(tmp_path, monkeypatch, older_packs_installed, failed_helper):
+    store = ConfigStore(tmp_path / "config.json")
+    store.save({"source_sound_pack": SOURCE_SOUND_PACK if older_packs_installed else "",
+                "trip_sound_pack": TRIP_SOUND_PACK if older_packs_installed else "",
+                "agoda_sound_file": "keep-agoda.wav", "expedia_sound_file": "keep-expedia.mp3",
+                "traveloka_sound_file": "keep-traveloka.wav", "trip_sound_file": "keep-trip.wav",
+                "booking_com_sound_file": "keep-booking-com.wav", "sound_file": "keep-common.wav",
+                "email_address": "hotel@example.invalid", "password_encrypted": "unchanged-encrypted-secret"})
+    original = store.path.read_bytes()
+    installer = getattr(audio, failed_helper)
+
+    def fail_booking_com(source, directory):
+        if source.lower() == "booking.com":
+            raise OSError("Booking.com asset unavailable")
+        return installer(source, directory)
+
+    monkeypatch.setattr(audio, failed_helper, fail_booking_com)
+    with pytest.raises(OSError, match="Booking.com asset unavailable"):
+        store.install_source_sound_pack(tmp_path / "sounds")
+    assert store.path.read_bytes() == original
+    assert store.load()["booking_com_sound_pack"] == ""

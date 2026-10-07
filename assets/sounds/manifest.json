@@ -48,6 +48,17 @@
       "pcm_sha256": "745006680189974e73add2f9bba9c5f585636c998fde37a161c1b25a0936f7c4",
       "pcm_sample_frames": 100271,
       "pcm_duration_seconds": 2.273718820861678
+    },
+    "Booking.com": {
+      "filename": "5-booking-com.mp3",
+      "bytes": 44765,
+      "duration_seconds": 2.73265306122449,
+      "sha256": "0196f20b5941ba12a6948545dc3f4a1dcc641fd6cf47bada452e03f4f77915fa",
+      "pcm_filename": "5-booking-com-pcm.wav",
+      "pcm_bytes": 241064,
+      "pcm_sha256": "5bb869d79c08b73cec8c1da93dc0fbf23e9fc0a8f9d60ee91d9461b8122af101",
+      "pcm_sample_frames": 120510,
+      "pcm_duration_seconds": 2.73265306122449
     }
   }
 }

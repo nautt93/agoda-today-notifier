@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import pytest
 
 import app as desktop
 from app import BookingNotifierApp
+from booking_notifier.audio import BOOKING_COM_SOUND_PACK, SOURCE_SOUND_SHA256, WindowsMciAudioPlayer
 from booking_notifier.booking_com import DETAIL_SNAPSHOT_JS, canonical_details_url
 from booking_notifier.booking_com_browser import BookingComBrowser, packaged_browser_smoke
 from booking_notifier.config import ConfigStore
@@ -78,7 +80,8 @@ def test_native_basic_and_enriched_popup_same_window_two_big_actions_no_second_s
     monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
     monkeypatch.setattr(desktop, "ConfigStore", lambda: store)
     monkeypatch.setattr(desktop, "StateStore", lambda: state)
-    play, beep = Mock(), Mock()
+    play, beep, send = Mock(), Mock(), Mock()
+    monkeypatch.setattr(WindowsMciAudioPlayer, "_send", send)
     monkeypatch.setattr(winsound, "PlaySound", play)
     monkeypatch.setattr(winsound, "MessageBeep", beep)
     root = tk.Tk()
@@ -104,12 +107,21 @@ def test_native_basic_and_enriched_popup_same_window_two_big_actions_no_second_s
         popup = app.active_popup
         copy, close = popup_action_buttons(popup)
         assert popup.winfo_viewable() and root.state() == "withdrawn" and app.sound_active
-        assert "booking.com-chime-v1.wav" in play.call_args.args[0]
+        assert app.sound_uses_file
+        sound = Path(app.config["booking_com_sound_file"])
+        assert sound.name == "5-booking-com.mp3"
+        assert hashlib.sha256(sound.read_bytes()).hexdigest() == SOURCE_SOUND_SHA256["booking.com"]
+        assert app.config["booking_com_sound_pack"] == store.load()["booking_com_sound_pack"] == BOOKING_COM_SOUND_PACK
+        opens = [call.args[0] for call in send.call_args_list if call.args[0].startswith("open ")]
+        assert len(opens) == 1 and "5-booking-com.mp3" in opens[0]
+        assert send.call_args.args == (f"play {WindowsMciAudioPlayer.ALIAS} repeat",)
+        beep.assert_not_called()
+        assert play.call_args.args == (None, 0)
         assert app.active_menu.index("end") == 0
         assert not any("print_" in child.winfo_name() for child in popup.winfo_children())
         assert app.active_guest_var.get() == "Chờ chi tiết khách"
         screenshot("booking-com-basic-popup.png", popup)
-        plays = play.call_count
+        plays = send.call_count
         full = BookingEvent.from_dict({**event.to_dict(), "guest_name": "NGUYỄN SYNTHETIC FULL GUEST", "room_type": "Deluxe Double Room x2; Triple City View x1",
                                      "checkout_date": (date.today() + timedelta(days=2)).isoformat(), "total_revenue": "VND 1.200.000", "details_loaded_at": "2026-10-07T12:00:00"})
         assert state.enrich_booking_com(full, date.today())
@@ -117,16 +129,17 @@ def test_native_basic_and_enriched_popup_same_window_two_big_actions_no_second_s
         app._drain_events()
         root.update()
         assert app.active_popup is popup and app.active_guest_var.get() == full.guest_name
-        assert app.active_room_var.get() == full.room_type and play.call_count == plays
+        assert app.active_room_var.get() == full.room_type and send.call_count == plays
         assert app.active_guest_label.winfo_height() >= app.active_guest_label.winfo_reqheight()
         assert app.sound_active and not state.is_acknowledged(full)
         screenshot("booking-com-full-popup.png", popup)
         copy.invoke()
         assert root.clipboard_get() == excel_tsv(full) and len(root.clipboard_get().split("\t")) == 9
-        assert play.call_count == plays and app.sound_active
+        assert send.call_count == plays and app.sound_active
         close.invoke()
         root.update()
         assert state.is_acknowledged(full) and len(state.history()) == 1 and app.active_popup is None
+        assert send.call_args.args == (f"close {WindowsMciAudioPlayer.ALIAS}",)
         app.events.put(("alert", event))
         app._drain_events()
         root.update()

@@ -23,7 +23,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 MAX_MANIFEST_BYTES = 1_000_000
 MAX_UPDATE_BYTES = 300_000_000
-USER_AGENT = "BookingDesk-Updater/1.7.20"
+USER_AGENT = "BookingDesk-Updater/1.7.21"
 UPDATE_PUBLIC_KEY_B64 = "MfTQyUTsvyFEk2ybaktEjB26OsNYQLVVM/4dWRo6RO8="
 VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:[-+]([0-9A-Za-z.-]+))?$")
 

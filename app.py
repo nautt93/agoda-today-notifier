@@ -563,7 +563,7 @@ class BookingNotifierApp:
             preview = ttk.Button(row, text=f"Nghe thử {source}", command=lambda s=source: self.preview_source_sound(s), style="Secondary.TButton")
             preview.pack(side="left", padx=(8, 0))
             self.sound_preview_buttons[source] = preview
-        ttk.Label(sounds, text="Đã tích hợp: Agoda → 1-agoda.mp3; Expedia → 2-expedia.mp3;\nTraveloka → 3-traveloka.mp3; Trip → 4-trip.mp3 (âm thanh bạn cung cấp).\nBooking.com dùng chuông riêng; bạn có thể chọn MP3/WAV. Nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(0, 12))
+        ttk.Label(sounds, text="Đã tích hợp âm thanh bạn cung cấp: Agoda → 1-agoda.mp3; Expedia → 2-expedia.mp3;\nTraveloka → 3-traveloka.mp3; Trip → 4-trip.mp3; Booking.com → 5-booking-com.mp3.\nBạn có thể chọn MP3/WAV riêng. Nghe thử tự dừng sau 4 giây.", style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(0, 12))
         ttk.Label(sounds, text="Âm thanh chung dự phòng (giữ cấu hình cũ)", style="Field.TLabel").pack(anchor="w", pady=(0, 5))
         common = ttk.Frame(sounds, style="Card.TFrame")
         common.pack(fill="x")
@@ -681,6 +681,7 @@ class BookingNotifierApp:
             "sound_file": self.sound_var.get().strip(),
             "source_sound_pack": str(self.config.get("source_sound_pack", "")),
             "trip_sound_pack": str(self.config.get("trip_sound_pack", "")),
+            "booking_com_sound_pack": str(self.config.get("booking_com_sound_pack", "")),
             **{SOURCE_SOUND_KEYS[source.lower()]: variable.get().strip() for source, variable in self.source_sound_vars.items()},
             "booking_com_enrichment": self.booking_com_enabled_var.get(),
             "booking_com_browser": self.booking_com_browser_var.get(),
@@ -1289,11 +1290,6 @@ class BookingNotifierApp:
                     candidates.append(bundled_source_pcm(source, APP_DIR / "sounds"))
                 except Exception:
                     LOGGER.exception("Cannot prepare bundled %s PCM; continue with fallback audio", source)
-            elif source.strip().lower() == "booking.com":
-                try:
-                    candidates.append(default_source_sound(source, APP_DIR / "sounds"))
-                except Exception:
-                    LOGGER.exception("Cannot prepare Booking.com chime; continue with fallback audio")
             candidates.extend(configured_sound_paths({"sound_file": config.get("sound_file", "")}, source))
             for path in dict.fromkeys(candidates):
                 if play_file(path):

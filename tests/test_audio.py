@@ -34,7 +34,7 @@ from booking_notifier.audio import (
 from booking_notifier.config import ConfigStore
 from booking_notifier.models import BookingEvent
 
-SOURCE_NAMES = ("Agoda", "Expedia", "Traveloka", "Trip")
+SOURCE_NAMES = ("Agoda", "Expedia", "Traveloka", "Trip", "Booking.com")
 
 
 @pytest.mark.parametrize(("source", "expected"), [
@@ -42,12 +42,14 @@ SOURCE_NAMES = ("Agoda", "Expedia", "Traveloka", "Trip")
     ("Expedia", ["expedia.wav", "common.wav"]),
     ("Traveloka", ["traveloka.mp3", "common.wav"]),
     ("Trip", ["trip.mp3", "common.wav"]),
+    ("Booking.com", ["booking-com.mp3", "common.wav"]),
+    (" BOOKING.COM ", ["booking-com.mp3", "common.wav"]),
     (" agoda ", ["agoda.mp3", "common.wav"]),
     (" TRIP ", ["trip.mp3", "common.wav"]),
     ("Unknown", ["common.wav"]),
 ])
 def test_sound_paths_only_use_matching_source_then_legacy(source, expected):
-    config = {"agoda_sound_file": "agoda.mp3", "expedia_sound_file": "expedia.wav", "traveloka_sound_file": "traveloka.mp3", "trip_sound_file": "trip.mp3", "sound_file": "common.wav"}
+    config = {"agoda_sound_file": "agoda.mp3", "expedia_sound_file": "expedia.wav", "traveloka_sound_file": "traveloka.mp3", "trip_sound_file": "trip.mp3", "booking_com_sound_file": "booking-com.mp3", "sound_file": "common.wav"}
     assert configured_sound_paths(config, source) == [Path(value) for value in expected]
     assert configured_sound_paths({"agoda_sound_file": "same.wav", "sound_file": "same.wav"}, "Agoda") == [Path("same.wav")]
 
@@ -68,7 +70,7 @@ def test_migration_and_config_round_trip_preserve_old_and_new_files(tmp_path):
 def test_built_in_chimes_are_distinct_valid_wav_and_reused(tmp_path):
     sounds = [default_source_sound(source, tmp_path) for source in SOURCE_NAMES]
     agoda = sounds[0]
-    assert len(set(sounds)) == len({path.read_bytes() for path in sounds}) == 4
+    assert len(set(sounds)) == len({path.read_bytes() for path in sounds}) == 5
     for path in sounds:
         with wave.open(str(path), "rb") as sound:
             assert sound.getnchannels() == 1 and sound.getsampwidth() == 2
@@ -91,10 +93,11 @@ def test_original_bundled_sound_assets_match_recorded_metadata():
         "expedia": "5badf83c9b0dbccf032f49d16d8d510693f2d55084cf7a7086ff55b277bffb69",
         "traveloka": "dbd9535a22f4f6f48952f3598048b213923818dc633b45d28813e4577015762e",
         "trip": "e998ab377bfb81d68bed847045a5c8135cdca94da15a5f46dc997d3ab6cd07e4",
+        "booking.com": "0196f20b5941ba12a6948545dc3f4a1dcc641fd6cf47bada452e03f4f77915fa",
     }
     assert SOURCE_SOUND_SHA256 == expected_hashes
     assert set(SOURCE_SOUND_FILES) == set(SOURCE_PCM_FILES) == set(SOURCE_PCM_SHA256) == set(expected_hashes)
-    assert set(SOURCE_SOUND_KEYS) == {*expected_hashes, "booking.com"}
+    assert set(SOURCE_SOUND_KEYS) == set(expected_hashes)
     assert set(metadata["sounds"]) == set(SOURCE_NAMES)
     assert metadata["audio_format"] == "MPEG Layer III"
     assert metadata["channels"] == 1 and metadata["sample_rate_hz"] == 44100
@@ -121,7 +124,7 @@ def test_pyinstaller_spec_bundles_all_exact_source_mp3_files():
         assert Path(source).is_file() and destination == "assets/sounds"
 
 
-@pytest.mark.parametrize("source", ["Agoda", " Expedia ", "Traveloka", " Trip "])
+@pytest.mark.parametrize("source", ["Agoda", " Expedia ", "Traveloka", " Trip ", " BOOKING.COM "])
 def test_bundled_source_sound_preserves_bytes_repairs_damage_and_reuses_stable_file(tmp_path, source):
     key = source.strip().lower()
     directory = tmp_path / "writable app data" / "sounds"
@@ -164,6 +167,8 @@ def test_frozen_resource_resolution_uses_meipass_and_never_cwd(tmp_path, monkeyp
     ("Traveloka", bundled_source_pcm, "3-traveloka-pcm.wav"),
     ("Trip", bundled_source_sound, "4-trip.mp3"),
     ("Trip", bundled_source_pcm, "4-trip-pcm.wav"),
+    ("Booking.com", bundled_source_sound, "5-booking-com.mp3"),
+    ("Booking.com", bundled_source_pcm, "5-booking-com-pcm.wav"),
 ])
 def test_invalid_packaged_asset_is_rejected_without_overwriting_existing_file(tmp_path, monkeypatch, damage, source, installer, filename):
     frozen_root = tmp_path / "frozen"
@@ -326,12 +331,12 @@ def audio_app(tmp_path, monkeypatch):
     return app, winsound
 
 
-@pytest.mark.parametrize(("source", "extension"), [("Agoda", ".mp3"), ("Expedia", ".wav"), ("Traveloka", ".mp3"), ("Trip", ".mp3")])
+@pytest.mark.parametrize(("source", "extension"), [("Agoda", ".mp3"), ("Expedia", ".wav"), ("Traveloka", ".mp3"), ("Trip", ".mp3"), ("Booking.com", ".mp3"), ("Booking.com", ".wav")])
 def test_booking_sound_routes_by_active_alert_and_stops_previous_timer(tmp_path, monkeypatch, source, extension):
     app, winsound = audio_app(tmp_path, monkeypatch)
     selected = tmp_path / (source + extension)
     selected.write_bytes(b"audio")
-    app.config = {f"{source.lower()}_sound_file": str(selected), "sound_file": "old.wav"}
+    app.config = {SOURCE_SOUND_KEYS[source.lower()]: str(selected), "sound_file": "old.wav"}
     app.active_alert = BookingEvent(source=source, booking_id="12345", checkin_date=date.today())
     app.sound_repeat_job = "old-beep"
     app.sound_preview_job = "old-preview"
@@ -349,11 +354,11 @@ def test_booking_sound_routes_by_active_alert_and_stops_previous_timer(tmp_path,
     assert not app.sound_active and winsound.PlaySound.call_args.args == (None, 0)
 
 
-@pytest.mark.parametrize("source", ["Agoda", "Trip"])
+@pytest.mark.parametrize("source", ["Agoda", "Trip", "Booking.com"])
 def test_missing_source_file_uses_own_bundled_mp3_before_legacy_or_other_provider(tmp_path, monkeypatch, source):
     app, winsound = audio_app(tmp_path, monkeypatch)
     legacy = default_source_sound("Expedia", tmp_path)
-    app._start_source_sound(source, {f"{source.lower()}_sound_file": "missing.mp3", "expedia_sound_file": "other.wav", "sound_file": str(legacy)})
+    app._start_source_sound(source, {SOURCE_SOUND_KEYS[source.lower()]: "missing.mp3", "expedia_sound_file": "other.wav", "sound_file": str(legacy)})
     assert app.sound_uses_file
     app.mp3_player.play_loop.assert_called_once_with(tmp_path / "sounds" / SOURCE_SOUND_FILES[source.lower()])
     assert winsound.PlaySound.call_args.args == (None, 0)
@@ -374,13 +379,13 @@ def test_without_source_configuration_uses_exact_supplied_mp3_before_common_audi
     app.root.after.assert_not_called()
 
 
-@pytest.mark.parametrize("source", ["Traveloka", "Trip"])
+@pytest.mark.parametrize("source", ["Traveloka", "Trip", "Booking.com"])
 def test_missing_bundled_asset_uses_legacy_not_other_provider(tmp_path, monkeypatch, source):
     app, winsound = audio_app(tmp_path, monkeypatch)
     legacy = default_source_sound("Expedia", tmp_path)
     monkeypatch.setattr(desktop, "bundled_source_sound", Mock(side_effect=FileNotFoundError("no bundled audio")))
     monkeypatch.setattr(desktop, "bundled_source_pcm", Mock(side_effect=FileNotFoundError("no bundled PCM")))
-    app._start_source_sound(source, {f"{source.lower()}_sound_file": "missing.mp3", "agoda_sound_file": "other.wav", "sound_file": str(legacy)})
+    app._start_source_sound(source, {SOURCE_SOUND_KEYS[source.lower()]: "missing.mp3", "agoda_sound_file": "other.wav", "sound_file": str(legacy)})
     assert app.sound_uses_file and winsound.PlaySound.call_args.args[0] == str(legacy)
     app.mp3_player.play_loop.assert_not_called()
 
@@ -392,7 +397,7 @@ def test_mci_failure_uses_matching_supplied_recording_pcm_before_common_or_synth
     selected.write_bytes(b"not mp3")
     legacy = default_source_sound("Agoda", tmp_path / "legacy")
     app.mp3_player.play_loop.side_effect = RuntimeError("bad codec")
-    app._start_source_sound(source, {f"{source.lower()}_sound_file": str(selected), "sound_file": str(legacy)})
+    app._start_source_sound(source, {SOURCE_SOUND_KEYS[source.lower()]: str(selected), "sound_file": str(legacy)})
     assert app.sound_active and app.sound_uses_file
     pcm = Path(winsound.PlaySound.call_args.args[0])
     assert pcm.name == SOURCE_PCM_FILES[source.lower()]
@@ -401,7 +406,7 @@ def test_mci_failure_uses_matching_supplied_recording_pcm_before_common_or_synth
     winsound.MessageBeep.assert_not_called()
 
 
-@pytest.mark.parametrize("source", ["Traveloka", "Trip"])
+@pytest.mark.parametrize("source", ["Traveloka", "Trip", "Booking.com"])
 def test_missing_recorded_pcm_and_failed_mci_falls_back_to_same_source_synthetic_chime(tmp_path, monkeypatch, source):
     app, winsound = audio_app(tmp_path, monkeypatch)
     app.mp3_player.play_loop.side_effect = RuntimeError("MCI unavailable")

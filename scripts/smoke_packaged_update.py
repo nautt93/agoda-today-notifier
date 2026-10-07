@@ -34,11 +34,12 @@ def create_synthetic_wav(path: Path, frequency: int) -> None:
         sound.writeframes(frames)
 
 
-def prepare_profile(config_dir: Path, marked: bool) -> tuple[dict, dict, dict[Path, str], str]:
+def prepare_profile(config_dir: Path, marked: bool, current: bool = False) -> tuple[dict, dict, dict[Path, str], str]:
     config_dir.mkdir(parents=True)
     config = {
         "f92_enabled": False, "start_with_windows": False, "quiet_hours_enabled": False,
         "email_address": "", "update_manifest_source": "",
+        "booking_com_enrichment": False,
     }
     pending = {
         "checkin_date": date.today().isoformat(),
@@ -54,14 +55,23 @@ def prepare_profile(config_dir: Path, marked: bool) -> tuple[dict, dict, dict[Pa
             "email_address": "ota-smoke@example.invalid", "password_encrypted": "synthetic-not-a-real-credential",
             "imap_host": "", "poll_seconds": 90, "scan_days": 90, "f92_port": "COM8",
         })  # No host means the synthetic credentials never trigger a network connection.
-        for source, frequency in zip(("agoda", "expedia", "traveloka", "common"), (220, 330, 440, 550), strict=True):
+        sources = ("agoda", "expedia", "traveloka", "common", "trip") if current else ("agoda", "expedia", "traveloka", "common")
+        for source, frequency in zip(sources, (220, 330, 440, 550, 660)[:len(sources)], strict=True):
             sound = config_dir / "custom sounds" / f"existing-{source}.wav"
             create_synthetic_wav(sound, frequency)
             config["sound_file" if source == "common" else f"{source}_sound_file"] = str(sound)
             custom_hashes[sound] = digest(sound)
-        assert len(set(custom_hashes.values())) == 4
+        assert len(set(custom_hashes.values())) == len(sources)
         pending.update({"source": "Agoda", "booking_id": "TEST-OTA-1718", "guest_name": "Test Upgraded Guest"})
         popup_message = "POPUP Agoda TEST-OTA-1718"
+        if current:
+            config.update({"trip_sound_pack": "trip-mp3-v1", "booking_com_browser": "chrome", "booking_com_sound_file": ""})
+            profile = config_dir / "booking-com-browser" / "synthetic-profile-marker"
+            profile.parent.mkdir()
+            profile.write_bytes(b"synthetic-only; no real cookie or credential")
+            custom_hashes[profile] = digest(profile)
+            pending.update({"source": "Booking.com", "booking_id": "TEST-OTA-1720"})
+            popup_message = "POPUP Booking.com TEST-OTA-1720"
     state = {
         "schema": 5, "pending_alerts": [pending],
         "history": [{"guest_name": "Test Old Guest", "checkin_date": "30/09/2026", "custom": "preserve"}],
@@ -78,9 +88,10 @@ def verify_source_recordings(project: Path, config_dir: Path, installed_config: 
     manifest = json.loads((project / "assets" / "sounds" / "manifest.json").read_text(encoding="utf-8"))
     hashes = set()
     for source in sources:
-        metadata = manifest["sounds"][source.title()]
+        metadata = manifest["sounds"]["Booking.com" if source == "booking.com" else source.title()]
         copied = config_dir / "sounds" / metadata["filename"]
-        assert installed_config[f"{source}_sound_file"] == str(copied), f"Incorrect {source} default mapping"
+        key = "booking_com_sound_file" if source == "booking.com" else f"{source}_sound_file"
+        assert installed_config[key] == str(copied), f"Incorrect {source} default mapping"
         assert digest(copied) == digest(project / "assets" / "sounds" / metadata["filename"]) == metadata["sha256"], f"Incorrect {source} MP3 bytes"
         hashes.add(digest(copied))
         pcm = config_dir / "sounds" / metadata["pcm_filename"]
@@ -92,15 +103,15 @@ def verify_source_recordings(project: Path, config_dir: Path, installed_config: 
     assert len(hashes) == len(sources), "Supplied source files must be distinct"
 
 
-def exercise_upgrade(project: Path, asset: Path, expected: str, launcher: Path, scratch: Path, marked: bool) -> None:
-    label = "marked-1.7.18" if marked else "legacy-1.5.x"
+def exercise_upgrade(project: Path, asset: Path, expected: str, launcher: Path, scratch: Path, marked: bool, current: bool = False) -> None:
+    label = "marked-1.7.20" if current else "marked-1.7.18" if marked else "legacy-1.5.x"
     scenario = scratch / label
     target = scenario / "dist" / f"OTA-Smoke-{scratch.name}-{label}.exe"
     target.parent.mkdir(parents=True)
     shutil.copyfile(launcher, target)
     appdata = scenario / "profile"
     config_dir = appdata / "AgodaTodayNotifier"
-    original_config, original_state, custom_hashes, popup_message = prepare_profile(config_dir, marked)
+    original_config, original_state, custom_hashes, popup_message = prepare_profile(config_dir, marked, current)
     process = None
     print(f"RUN: frozen OTA scenario {label}", flush=True)
     try:
@@ -137,18 +148,22 @@ def exercise_upgrade(project: Path, asset: Path, expected: str, launcher: Path, 
                 installed_config = json.loads((config_dir / "config.json").read_text(encoding="utf-8"))
                 assert installed_config["source_sound_pack"] == "hotel-mp3-v1", f"{label}: legacy pack marker changed"
                 assert installed_config["trip_sound_pack"] == "trip-mp3-v1", f"{label}: Trip pack marker missing"
+                assert installed_config["booking_com_sound_pack"] == "booking-com-mp3-v1", f"{label}: Booking.com pack marker missing"
                 if marked:
+                    changed = {"booking_com_sound_file", "booking_com_sound_pack"}
+                    if not current:
+                        changed.update({"trip_sound_pack", "trip_sound_file"})
                     for key, value in original_config.items():
-                        if key not in {"trip_sound_pack", "trip_sound_file"}:
+                        if key not in changed:
                             assert installed_config[key] == value, f"{label}: existing {key} was overwritten"
                     for path, original_hash in custom_hashes.items():
                         assert digest(path) == original_hash, f"{label}: existing custom sound bytes changed"
-                    verify_source_recordings(project, config_dir, installed_config, ("trip",))
-                    print("PASS: marked 1.7.18 frozen OTA preserves all three custom source choices, common sound bytes and synthetic credentials; only Trip default added.", flush=True)
+                    verify_source_recordings(project, config_dir, installed_config, ("booking.com",) if current else ("trip", "booking.com"))
+                    print(f"PASS: {label} frozen OTA preserves existing source choices, common sound bytes, browser profile and synthetic credentials; only new defaults added.", flush=True)
                 else:
-                    verify_source_recordings(project, config_dir, installed_config, ("agoda", "expedia", "traveloka", "trip"))
-                    print("PASS: legacy frozen OTA installs all four exact MP3/PCM recordings, mappings and manifest frame counts.", flush=True)
-                print(f"PASS: {label} frozen handoff, EXE replacement, real Tk UI and tray startup; both pack markers persisted and updater markers cleaned.", flush=True)
+                    verify_source_recordings(project, config_dir, installed_config, ("agoda", "expedia", "traveloka", "trip", "booking.com"))
+                    print("PASS: legacy frozen OTA installs all five exact MP3/PCM recordings, mappings and manifest frame counts.", flush=True)
+                print(f"PASS: {label} frozen handoff, EXE replacement, real Tk UI and tray startup; all pack markers persisted and updater markers cleaned.", flush=True)
                 print(f"PASS: {label} pending popup, history and ten unfinished email UIDs preserved.", flush=True)
                 return
             time.sleep(0.25)
@@ -180,9 +195,9 @@ def main() -> None:
             "--workpath", str(scratch / "build"), "--specpath", str(scratch),
             str(project / "tests" / "fixtures" / "ota_launcher.py"),
         ], check=True, timeout=240)
-        for marked in (False, True):
-            exercise_upgrade(project, asset, expected, launcher, scratch, marked)
-        print("PASS: both frozen OTA profile scenarios completed successfully.", flush=True)
+        for marked, current in ((False, False), (True, False), (True, True)):
+            exercise_upgrade(project, asset, expected, launcher, scratch, marked, current)
+        print("PASS: all three frozen OTA profile scenarios completed successfully.", flush=True)
 
 
 if __name__ == "__main__":

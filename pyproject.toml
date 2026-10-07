@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "booking-checkin-hom-nay"
-version = "1.7.20"
+version = "1.7.21"
 description = "Windows notifier for Agoda, Expedia, Traveloka, Trip and Booking.com arrivals today"
 readme = "README.md"
 requires-python = ">=3.11"

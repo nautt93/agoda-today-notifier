@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.20"
+APP_VERSION = "1.7.21"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -37,6 +37,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "booking_com_sound_file": "",
     "source_sound_pack": "",
     "trip_sound_pack": "",
+    "booking_com_sound_pack": "",
     "booking_com_enrichment": True,
     "booking_com_browser": "auto",
     "f92_enabled": True,
@@ -100,7 +101,7 @@ class ConfigStore:
         replace the saved choices or mark an incomplete pack as installed.
         """
         from .audio import (
-            SOURCE_SOUND_FILES,
+            BOOKING_COM_SOUND_PACK,
             SOURCE_SOUND_KEYS,
             SOURCE_SOUND_PACK,
             TRIP_SOUND_PACK,
@@ -111,12 +112,13 @@ class ConfigStore:
         config = self.load()
         install_legacy = config.get("source_sound_pack") != SOURCE_SOUND_PACK
         install_trip = config.get("trip_sound_pack") != TRIP_SOUND_PACK
-        if not install_legacy and not install_trip:
+        install_booking_com = config.get("booking_com_sound_pack") != BOOKING_COM_SOUND_PACK
+        if not install_legacy and not install_trip and not install_booking_com:
             return config
         paths: dict[str, str] = {}
         if install_legacy:
-            # The original three-source migration must not rerun when adding Trip.
-            legacy_sources = [source for source in SOURCE_SOUND_FILES if source != "trip"]
+            # Adding a provider must never change the original three-source pack.
+            legacy_sources = ("agoda", "expedia", "traveloka")
             paths.update({SOURCE_SOUND_KEYS[source]: str(bundled_source_sound(source, directory))
                           for source in legacy_sources})
             for source in legacy_sources:
@@ -126,10 +128,17 @@ class ConfigStore:
             bundled_source_pcm("Trip", directory)
             if not str(config.get("trip_sound_file") or "").strip():
                 paths["trip_sound_file"] = str(trip_path)
+        if install_booking_com:
+            booking_com_path = bundled_source_sound("Booking.com", directory)
+            bundled_source_pcm("Booking.com", directory)
+            if not str(config.get("booking_com_sound_file") or "").strip():
+                paths["booking_com_sound_file"] = str(booking_com_path)
         config.update(paths)
         if install_legacy:
             config["source_sound_pack"] = SOURCE_SOUND_PACK
         if install_trip:
             config["trip_sound_pack"] = TRIP_SOUND_PACK
+        if install_booking_com:
+            config["booking_com_sound_pack"] = BOOKING_COM_SOUND_PACK
         self.save(config)
         return config
