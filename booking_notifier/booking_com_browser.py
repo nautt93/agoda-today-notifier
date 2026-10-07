@@ -32,6 +32,7 @@ AUTHENTICATED_PAGE_JS = """() => {
     if ([...challenges].some(visible)) return false;
     return [...document.querySelectorAll(
         '[data-test-id="reservation-overview-name"], a[href*="extranet_ng/manage/bookings"], '
+        + 'a[href*="extranet_ng/manage/search_reservations"], '
         + 'a[href*="logout"], form[action*="logout"]')].some(visible);
 }"""
 
@@ -353,6 +354,12 @@ class BookingComWorker(threading.Thread):
                     self.retry_after.clear()
                 elif command == "login":
                     try:
+                        if payload is None:
+                            # After authentication, land on a known arrival that
+                            # needs details instead of leaving the user at Home.
+                            candidates = self.state.booking_com_candidates(date.today())
+                            payload = next((event for event in candidates if
+                                            canonical_details_url(event.details_url, event.booking_id)), None)
                         self._client().login(payload)
                         self.login_polling = True
                         self.retry_after.clear()

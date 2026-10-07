@@ -249,6 +249,7 @@ def test_authentication_probe_is_boolean_and_does_not_read_or_persist_secret_val
     assert client._authenticated_page(page)
     page.evaluate.assert_called_once_with(AUTHENTICATED_PAGE_JS)
     assert "password" in AUTHENTICATED_PAGE_JS and "one-time-code" in AUTHENTICATED_PAGE_JS
+    assert "extranet_ng/manage/search_reservations" in AUTHENTICATED_PAGE_JS
     assert all(secret_reader not in AUTHENTICATED_PAGE_JS for secret_reader in
                (".value", "document.cookie", "localStorage", "sessionStorage", "storage_state"))
     assert not profile.exists()
@@ -494,6 +495,74 @@ def test_worker_authenticated_visible_status_does_not_pretend_window_is_backgrou
     factory.assert_not_called()
     client.fetch.assert_not_called()
     client.close.assert_called_once()
+
+
+def run_worker_login(tmp_path, state, payload):
+    events, client = queue.Queue(), Mock()
+    worker = BookingComWorker(events, state, {"booking_com_enrichment": True}, tmp_path, Mock(return_value=client))
+    worker.refresh = Mock()  # Login target selection must be checked before any automatic enrichment.
+    worker.login(payload)
+    worker.commands.put(("stop", None))
+    worker.run()
+    client.fetch.assert_not_called()
+    assert "alert" not in [kind for kind, _ in list(events.queue)]
+    client.close.assert_called_once()
+    return client
+
+
+def test_worker_default_login_targets_first_valid_pending_arrival_today_not_unsafe_or_future(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    event = basic_event()
+    unsafe = replace(event, booking_id="5550000000", details_url="https://evil.invalid/booking?res_id=5550000000")
+    second = replace(event, booking_id="5550000002", details_url=event.details_url.replace("5550000001", "5550000002"))
+    future = replace(event, booking_id="5550000003", checkin_date=date.today() + timedelta(days=1),
+                     details_url=event.details_url.replace("5550000001", "5550000003"))
+    state.register_today_confirmation(unsafe, ("unsafe",), date.today())
+    state.register_today_confirmation(event, ("today-first",), date.today())
+    state.register_today_confirmation(second, ("today-second",), date.today())
+    state.apply_event(future, ("future",))
+    state.booking_com_candidates = Mock(wraps=state.booking_com_candidates)
+    before = state.path.read_bytes()
+    client = run_worker_login(tmp_path, state, None)
+    state.booking_com_candidates.assert_called_once_with(date.today())
+    target = client.login.call_args.args[0]
+    assert target.booking_id == event.booking_id and target.checkin_date == date.today()
+    assert target.details_url == event.details_url
+    assert client.login.call_count == 1 and state.path.read_bytes() == before
+
+
+def test_worker_explicit_login_booking_is_preserved_without_default_candidate_lookup(tmp_path):
+    state = StateStore(tmp_path / "state.json")
+    event = basic_event()
+    state.register_today_confirmation(event, ("today-default",), date.today())
+    state.booking_com_candidates = Mock(wraps=state.booking_com_candidates)
+    selected = replace(event, booking_id="5550000009", details_url=event.details_url.replace("5550000001", "5550000009"))
+    client = run_worker_login(tmp_path, state, selected)
+    client.login.assert_called_once_with(selected)
+    assert client.login.call_args.args[0] is selected
+    state.booking_com_candidates.assert_not_called()
+
+
+@pytest.mark.parametrize("kind", ["none", "missing-url", "untrusted-url", "mismatched-id", "insecure-url", "future-only"])
+def test_worker_default_login_without_safe_today_candidate_opens_home(tmp_path, kind):
+    state = StateStore(tmp_path / "state.json")
+    event = basic_event()
+    if kind != "none":
+        if kind == "missing-url":
+            event = replace(event, details_url="")
+        elif kind == "untrusted-url":
+            event = replace(event, details_url="https://evil.invalid/?res_id=5550000001&hotel_id=12345")
+        elif kind == "mismatched-id":
+            event = replace(event, details_url=event.details_url.replace("5550000001", "5550000002"))
+        elif kind == "insecure-url":
+            event = replace(event, details_url=event.details_url.replace("https://", "http://"))
+        else:
+            event = replace(event, checkin_date=date.today() + timedelta(days=1))
+        state.apply_event(event, ("synthetic-candidate",))
+    state.booking_com_candidates = Mock(wraps=state.booking_com_candidates)
+    client = run_worker_login(tmp_path, state, None)
+    client.login.assert_called_once_with(None)
+    state.booking_com_candidates.assert_called_once_with(date.today())
 
 
 def test_worker_background_command_is_queued_and_executed_on_own_thread(tmp_path):
