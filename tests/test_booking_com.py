@@ -110,7 +110,7 @@ def test_complete_details_multiroom_fullname_gross_room_price_and_exact_excel():
     assert row[8] == "Booking.com Deluxe Double Room x2; Triple City View x1"
 
 
-@pytest.mark.parametrize("change", ["id", "hotel", "arrival", "checkout", "name", "amount", "allocation", "contradiction"])
+@pytest.mark.parametrize("change", ["id", "hotel", "arrival", "checkout", "name", "amount", "allocation", "single_header", "contradiction"])
 def test_unverified_details_never_overwrite_basic_event(change):
     event = parse_booking_message(booking_message())
     snap = details(event)
@@ -128,6 +128,8 @@ def test_unverified_details_never_overwrite_basic_event(change):
         snap["fields"][4][1] = ""
     elif change == "allocation":
         snap["rooms"].pop()
+    elif change == "single_header":
+        snap["rooms"] = snap["rooms"][:1]
     else:
         snap["fields"].append(["Tổng số căn", "5"])
     with pytest.raises(BookingComDetailError):

@@ -166,8 +166,6 @@ def parse_booking_com_details(snapshot: dict[str, Any], event: BookingEvent) -> 
     counts = Counter(rooms)
     if len(rooms) == units:
         room_type = "; ".join(f"{room} x{count}" for room, count in counts.items())
-    elif len(rooms) == 1:
-        room_type = f"{rooms[0]} x{units}"
     else:
         raise BookingComDetailError("Số hạng phòng không khớp tổng số căn; không tự đoán số lượng từng hạng.")
     return replace(event, status=BOOKING_STATUS_NEW, guest_name=names.pop(), room_type=room_type, checkout_date=checkout,
