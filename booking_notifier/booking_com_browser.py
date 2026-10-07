@@ -27,7 +27,7 @@ AUTHENTICATED_PAGE_JS = """() => {
     const visible = el => !!el && !!el.getClientRects().length;
     const challenges = document.querySelectorAll(
         'input[type="password"], input[autocomplete="one-time-code"], input[name*="otp" i], '
-        + 'input[id*="otp" i], input[name*="verification" i], input[name*="code" i], '
+        + 'input[id*="otp" i], input[name*="verification" i], input[name="code" i], '
         + 'iframe[src*="account.booking.com"]');
     if ([...challenges].some(visible)) return false;
     return [...document.querySelectorAll(
@@ -230,8 +230,11 @@ class BookingComBrowser:
                 self.awaiting_login = True
                 raise BookingComBrowserError(LOGIN_REQUIRED)
             enriched = parse_booking_com_details(page.evaluate(DETAIL_SNAPSHOT_JS), event)
-            if self.awaiting_login:
+            if self.awaiting_login or not self.visible:
                 self.awaiting_login = False
+                # Chromium can restore a native window while creating/navigating
+                # a replacement tab after X. Re-hide after the page is loaded,
+                # but never hide a window the user explicitly opened to inspect.
                 self.background()
             return enriched
         except BookingComBrowserError:

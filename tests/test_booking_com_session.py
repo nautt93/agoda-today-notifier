@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 import booking_notifier.booking_com_browser as browser_module
-from booking_notifier.booking_com import ADMIN_HOME, DETAIL_PATH, canonical_details_url
+from booking_notifier.booking_com import ADMIN_HOME, DETAIL_PATH, DETAIL_SNAPSHOT_JS, canonical_details_url
 from booking_notifier.booking_com_browser import (
     AUTHENTICATED_PAGE_JS,
     BookingComBrowser,
@@ -267,6 +267,64 @@ def test_fetch_on_admin_otp_page_does_not_navigate_or_destroy_live_context(tmp_p
         client.fetch(basic_event())
     page.goto.assert_not_called()
     client.context.close.assert_not_called()
+
+
+@pytest.mark.parametrize("visible", [False, True], ids=["hidden-session-rehidden", "explicit-inspector-left-visible"])
+def test_successful_fetch_rehides_after_parse_only_for_hidden_session_without_second_notification(
+    tmp_path, monkeypatch, visible,
+):
+    event = basic_event()
+    client, page = connected_client(tmp_path)
+    client.visible = visible
+    context, operations = client.context, []
+    snapshot = {
+        "url": event.details_url,
+        "names": ["SYNTHETIC FULL GUEST"],
+        "rooms": ["Deluxe Room", "Deluxe Room"],
+        "fields": [["Mã số đặt phòng:", event.booking_id], ["Nhận phòng", date.today().isoformat()],
+                   ["Trả phòng", (date.today() + timedelta(days=2)).isoformat()], ["Tổng số căn", "2"],
+                   ["Tổng tiền phòng", "VND 800.000"]],
+    }
+
+    def navigate(url, **_kwargs):
+        page.url = url
+        operations.append("navigate")
+
+    def evaluate(script):
+        if script == DETAIL_SNAPSHOT_JS:
+            operations.append("parse")
+            return snapshot
+        assert script == AUTHENTICATED_PAGE_JS
+        return True
+
+    def background():
+        operations.append("background")
+        client.visible = False
+        return True
+
+    page.goto.side_effect, page.evaluate.side_effect = navigate, evaluate
+    hide = Mock(side_effect=background)
+    monkeypatch.setattr(client, "background", hide)
+    state, events = StateStore(tmp_path / "state.json"), queue.Queue()
+    state.register_today_confirmation(event, ("synthetic-mail",), date.today())
+    worker = BookingComWorker(events, state, {"booking_com_enrichment": True}, tmp_path, Mock(return_value=client))
+    worker.refresh()
+    worker.refresh()
+    assert operations == (["navigate", "parse"] if visible else ["navigate", "parse", "background"])
+    assert hide.call_count == (0 if visible else 1)
+    assert client.visible is visible and client.work_page is page and client.context is context and client.is_connected()
+    context.close.assert_not_called()
+    client.runtime.stop.assert_not_called()
+    page.close.assert_not_called()
+    page.bring_to_front.assert_not_called()
+    context.new_page.assert_not_called()
+    page.goto.assert_called_once_with(event.details_url, wait_until="domcontentloaded")
+    kinds = [kind for kind, _ in list(events.queue)]
+    assert kinds.count("history_changed") == 1 and "alert" not in kinds
+    assert state.register_today_confirmation(event, ("synthetic-resent",), date.today()) is None
+    pending = state.pending_for_date(date.today())
+    assert len(pending) == 1 and pending[0].guest_name == "SYNTHETIC FULL GUEST"
+    assert pending[0].room_type == "Deluxe Room x2" and not state.booking_com_candidates(date.today())
 
 
 def test_login_during_password_or_otp_entry_preserves_page_and_live_context(tmp_path, monkeypatch):

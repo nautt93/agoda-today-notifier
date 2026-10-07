@@ -135,6 +135,29 @@ def test_native_headed_cookie_session_survives_hide_and_browser_x_then_handles_s
         }])
         page.evaluate("key => sessionStorage.setItem(key, 'synthetic-runtime-only')", STORAGE_KEY)
         _assert_session_cookie(context)
+        # A trusted admin URL and guest-name marker are not proof of completed
+        # authentication while a visible verification challenge remains.
+        page.evaluate("""() => {
+            const input = document.createElement('input');
+            input.id = 'booking-desk-synthetic-otp';
+            input.name = 'code';
+            input.autocomplete = 'one-time-code';
+            document.body.appendChild(input);
+        }""")
+        assert page.locator('#booking-desk-synthetic-otp').is_visible()
+        assert client.maintain() == "waiting"
+        assert client.visible and client.awaiting_login and page.url == event.details_url
+        assert client.context is context and client.work_page is page and client._browser_pid() == pid
+        _assert_native_visibility(client, api, pid, all_hidden=False)
+        page.evaluate("""() => {
+            document.getElementById('booking-desk-synthetic-otp').remove();
+            const input = document.createElement('input');
+            input.name = 'postal_code';
+            input.autocomplete = 'postal-code';
+            document.body.appendChild(input);
+        }""")
+        assert page.locator('input[name="postal_code"]').is_visible()
+        assert client._authenticated_page(page)
         assert client.maintain() == "authenticated"
         assert not client.visible and not client.awaiting_login
         assert len(_assert_native_visibility(client, api, pid, all_hidden=True)) >= 2
