@@ -1263,6 +1263,11 @@ class BookingNotifierApp:
                     candidates.append(bundled_source_pcm(source, APP_DIR / "sounds"))
                 except Exception:
                     LOGGER.exception("Cannot prepare bundled %s PCM; continue with fallback audio", source)
+            elif source.strip().lower() == "booking.com":
+                try:
+                    candidates.append(default_source_sound(source, APP_DIR / "sounds"))
+                except Exception:
+                    LOGGER.exception("Cannot prepare Booking.com chime; continue with fallback audio")
             candidates.extend(configured_sound_paths({"sound_file": config.get("sound_file", "")}, source))
             for path in dict.fromkeys(candidates):
                 if play_file(path):
@@ -1591,7 +1596,7 @@ class BookingNotifierApp:
         if any(alert.source == "Booking.com" and not all((alert.guest_name, alert.room_type, alert.checkout_date, alert.total_revenue))
                for alert in alerts):
             messagebox.showinfo("Chưa đủ chi tiết Booking.com", "Email Booking.com này chỉ có mã/ngày đến. Hãy đăng nhập Booking.com trong Cài đặt và đợi lấy đủ chi tiết trước khi chép Excel.",
-                                parent=self.root)
+                                parent=getattr(self, "active_popup", None) or self.root)
             return False
         self.root.clipboard_clear()
         self.root.clipboard_append(excel_tsv_rows(alerts))

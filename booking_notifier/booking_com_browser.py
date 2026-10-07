@@ -79,9 +79,8 @@ class BookingComBrowser:
             raise BookingComBrowserError("Booking.com: email không có liên kết chi tiết hợp lệ.")
         self._launch()
         page = self._page()
-        if self.visible and not any(
-                urlsplit(p.url).hostname == "admin.booking.com" and parse_qs(urlsplit(p.url).query).get("hotel_id")
-                for p in self.context.pages):
+        if self.visible and (urlsplit(page.url).hostname != "admin.booking.com"
+                             or not parse_qs(urlsplit(page.url).query).get("hotel_id")):
             # Never navigate away while the user is typing a password/OTP.
             raise BookingComBrowserError(LOGIN_REQUIRED)
         # Extranet restores the local cookie session and adds its own session

@@ -1,10 +1,10 @@
 # Booking Check-in Hôm nay
 
-Ứng dụng Windows đọc thư xác nhận mới nhất từ Agoda, Expedia Partner Central, Traveloka và Trip.com, báo ngay nếu booking check-in hôm nay, theo cơ chế bản 1.5.5.
+Ứng dụng Windows đọc thư xác nhận mới nhất từ Agoda, Expedia Partner Central, Traveloka, Trip.com và Booking.com, báo ngay nếu booking check-in hôm nay, theo cơ chế bản 1.5.5.
 
 ## Tính năng
 
-- Đọc email Agoda, Expedia, Traveloka và Trip qua IMAP với TLS có xác minh chứng chỉ.
+- Đọc email Agoda, Expedia, Traveloka, Trip và Booking.com qua IMAP với TLS có xác minh chứng chỉ.
 - Lần đầu chỉ đọc 20 thư gần nhất; các lần sau chỉ đọc thư mới bằng mốc UID lưu trên máy. Không tải toàn bộ hộp thư hoặc tìm lại 500 thư cũ.
 - Khi tắt máy/mất mạng, lần kết nối sau đọc đủ thư mới chưa xử lý, kể cả hơn 20 thư. Lưu danh sách thư cần đọc trước khi tải; mất kết nối/thoát giữa chừng không làm mất phần còn thiếu. Luôn đọc thư mới trước và báo ngay.
 - Agoda, Expedia, Traveloka và Trip dùng chung cơ chế: email xác nhận mới → đọc ngày check-in → nếu là hôm nay, lưu cảnh báo và hiện popup; booking ngày khác và chỉnh sửa/hủy bỏ qua.
