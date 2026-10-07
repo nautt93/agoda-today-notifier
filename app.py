@@ -158,6 +158,8 @@ class BookingNotifierApp:
         self.active_checkout_var: tk.StringVar | None = None
         self.active_nights_var: tk.StringVar | None = None
         self.active_booking_details_var: tk.StringVar | None = None
+        self.active_guest_label: tk.Label | None = None
+        self.active_hero: tk.Frame | None = None
         self.queued_ids: set[str] = set()
         self.sound_active = False
         self.sound_uses_file = False
@@ -1092,6 +1094,7 @@ class BookingNotifierApp:
         self.active_popup = popup
         popup.title(f"{alert.source} • Check-in hôm nay")
         width, height = 620, 700 if alert.source in {"Expedia", "Traveloka"} else 640
+        popup.booking_base_height = height
         x = max(0, (popup.winfo_screenwidth() - width) // 2)
         y = max(0, (popup.winfo_screenheight() - height) // 2 - 20)
         popup.geometry(f"{width}x{height}+{x}+{y}")
@@ -1101,10 +1104,11 @@ class BookingNotifierApp:
         accent = self.COLORS.get(alert.source.strip().lower(), self.COLORS["agoda"])
 
         hero = tk.Frame(popup, bg=self.COLORS["primary"], height=118)
+        self.active_hero = hero
         hero.pack(fill="x")
         hero.pack_propagate(False)
         hero_text = tk.Frame(hero, bg=self.COLORS["primary"])
-        hero_text.pack(side="left", padx=28, pady=23)
+        hero_text.pack(side="left", padx=28, pady=18)
         tk.Label(
             hero_text, text="KHÁCH ĐẾN HÔM NAY", bg=self.COLORS["primary"], fg="#BFC9D8",
             font=("Segoe UI Semibold", 9),
@@ -1116,11 +1120,12 @@ class BookingNotifierApp:
             master=popup, value=alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else "—",
         )
         self.active_nights_var = tk.StringVar(master=popup, value=str(alert.nights) if alert.nights is not None else "—")
-        tk.Label(
+        self.active_guest_label = tk.Label(
             hero_text, textvariable=self.active_guest_var,
             bg=self.COLORS["primary"], fg=self.COLORS["header_text"], font=("Segoe UI Semibold", 22),
             wraplength=430, justify="left",
-        ).pack(anchor="w", pady=(6, 0))
+        )
+        self.active_guest_label.pack(anchor="w", pady=(6, 0))
         tk.Label(
             hero, text=alert.source.upper(), bg=accent, fg="#FFFFFF", font=("Segoe UI Semibold", 9),
             padx=14, pady=7,
@@ -1209,6 +1214,7 @@ class BookingNotifierApp:
         width = max(width, 2 * button_width + 12 + 56)
         x = max(0, (popup.winfo_screenwidth() - width) // 2)
         popup.geometry(f"{width}x{height}+{x}+{y}")
+        self._fit_popup_guest_header()
         self._present_alert_popup(popup)
         self.log(f"POPUP {alert.source} {alert.booking_id or '(không có mã)'}: đã mở thông báo check-in hôm nay.")
         # An audio driver/file error must never dismiss a valid booking notification.
@@ -1223,6 +1229,26 @@ class BookingNotifierApp:
         except Exception as exc:
             LOGGER.exception("F92 enqueue failed; popup remains visible")
             self.log(f"F92: {exc}; popup booking vẫn mở.")
+
+    def _fit_popup_guest_header(self) -> None:
+        """Full multi-line names must not be cropped by the fixed hero frame."""
+        popup = getattr(self, "active_popup", None)
+        label = getattr(self, "active_guest_label", None)
+        hero = getattr(self, "active_hero", None)
+        if popup is None or label is None or hero is None:
+            return
+        limit = max(640, popup.winfo_screenheight() - 72)
+        base = popup.booking_base_height
+        for size in range(22, 13, -1):
+            label.configure(font=("Segoe UI Semibold", size))
+            popup.update_idletasks()
+            header_height = max(118, label.winfo_reqheight() + 64)
+            height = base + header_height - 118
+            if height <= limit:
+                break
+        hero.configure(height=header_height)
+        x, y = popup.winfo_x(), min(popup.winfo_y(), max(0, popup.winfo_screenheight() - height - 64))
+        popup.geometry(f"{popup.winfo_width()}x{height}+{x}+{y}")
 
     def play_sound(self) -> None:
         source = self.active_alert.source if self.active_alert is not None else ""
@@ -1349,6 +1375,7 @@ class BookingNotifierApp:
                     variable = getattr(self, variable_name, None)
                     if variable is not None:
                         variable.set(value)
+                self._fit_popup_guest_header()
                 try:
                     self.f92_worker.notify(alert, play_sound=False)
                 except Exception:
@@ -1380,6 +1407,8 @@ class BookingNotifierApp:
         self.active_checkout_var = None
         self.active_nights_var = None
         self.active_booking_details_var = None
+        self.active_guest_label = None
+        self.active_hero = None
         self.refresh_history()
         self._show_next_alert()
 

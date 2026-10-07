@@ -118,6 +118,7 @@ def test_native_basic_and_enriched_popup_same_window_two_big_actions_no_second_s
         root.update()
         assert app.active_popup is popup and app.active_guest_var.get() == full.guest_name
         assert app.active_room_var.get() == full.room_type and play.call_count == plays
+        assert app.active_guest_label.winfo_height() >= app.active_guest_label.winfo_reqheight()
         assert app.sound_active and not state.is_acknowledged(full)
         screenshot("booking-com-full-popup.png", popup)
         copy.invoke()
