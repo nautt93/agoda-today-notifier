@@ -121,7 +121,7 @@ def test_native_basic_and_enriched_popup_same_window_two_big_actions_no_second_s
         assert play.call_args.args == (None, 0)
         assert app.active_menu.index("end") == 0
         assert not any("print_" in child.winfo_name() for child in popup.winfo_children())
-        assert app.active_guest_var.get() == "Chờ chi tiết khách"
+        assert app.active_guest_var.get() == "Booking mới đã nhận"
         screenshot("booking-com-basic-popup.png", popup)
         plays = send.call_count
         full = BookingEvent.from_dict({**event.to_dict(), "guest_name": "NGUYỄN SYNTHETIC FULL GUEST", "room_type": "Deluxe Double Room x2; Triple City View x1",

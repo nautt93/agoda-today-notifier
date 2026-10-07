@@ -42,6 +42,7 @@ from booking_notifier.ota_update import (
     report_update_startup,
     run_update_helper_from_argv,
 )
+from booking_notifier.popup_state import booking_com_details_ready, booking_com_popup_state
 from booking_notifier.security import protect_secret, unprotect_secret
 from booking_notifier.state import StateStore
 from booking_notifier.system_tray import SystemTray
@@ -158,6 +159,12 @@ class BookingNotifierApp:
         self.active_checkout_var: tk.StringVar | None = None
         self.active_nights_var: tk.StringVar | None = None
         self.active_booking_details_var: tk.StringVar | None = None
+        self.active_booking_title_var: tk.StringVar | None = None
+        self.active_booking_status_label: tk.Label | None = None
+        self.active_copy_button: ttk.Button | None = None
+        self.active_mute_button: ttk.Button | None = None
+        self.active_sound_muted = False
+        self.booking_com_popup_status = ""
         self.active_guest_label: tk.Label | None = None
         self.active_hero: tk.Frame | None = None
         self.queued_ids: set[str] = set()
@@ -256,6 +263,9 @@ class BookingNotifierApp:
         # Popup-only styles: large targets without changing the main toolbar.
         for name in ("Popup.Primary.TButton", "Popup.Secondary.TButton"):
             style.configure(name, font=("Segoe UI Semibold", 18), padding=(20, 24), focuscolor=self.COLORS["gold"])
+        style.map("Popup.Primary.TButton", background=[("disabled", "#E7E9ED"),
+                  ("active", self.COLORS["primary_hover"]), ("pressed", self.COLORS["primary_hover"])],
+                  foreground=[("disabled", "#697386"), ("!disabled", "#FFFFFF")])
         style.configure(
             "Danger.TButton", background=self.COLORS["surface"], foreground="#9E3F3F",
             bordercolor=self.COLORS["border"], lightcolor=self.COLORS["surface"], darkcolor=self.COLORS["surface"],
@@ -742,6 +752,7 @@ class BookingNotifierApp:
             set_start_with_windows(bool(self.config["start_with_windows"]))
             self.f92_worker.configure(self.config)
             self.booking_com_worker.configure(self.config)
+            self._refresh_booking_popup_state()
             self._restore_f92_display()
             self.start_monitoring()
             self.log("Đã lưu cấu hình an toàn và khởi động theo dõi.")
@@ -788,6 +799,7 @@ class BookingNotifierApp:
         self.config["booking_com_browser"] = self.booking_com_browser_var.get()
         self.config_store.save(self.config)
         self.booking_com_worker.configure(self.config)
+        self._refresh_booking_popup_state()
 
     def login_booking_com(self, alert: BookingEvent | None = None) -> None:
         self._save_booking_com_preferences()
@@ -900,8 +912,8 @@ class BookingNotifierApp:
                 elif event_type == "booking_com_status":
                     self.booking_com_status_var.set(str(payload))
                     self.log(str(payload))
-                    if self.active_alert and self.active_alert.source == "Booking.com" and self.active_booking_details_var:
-                        self.active_booking_details_var.set("Đã lấy đầy đủ chi tiết từ Extranet." if self.active_alert.details_loaded_at else str(payload))
+                    self.booking_com_popup_status = str(payload)
+                    self._refresh_booking_popup_state()
                 elif event_type in {"expedia_print_ready", "booking_print_ready"}:
                     self.print_loading = False
                     alert, image, error = payload
@@ -1096,6 +1108,11 @@ class BookingNotifierApp:
             self.f92_worker.idle()
             return
         self.active_alert = alert
+        self.active_sound_muted = False
+        self.active_mute_button = None
+        self.active_booking_title_var = None
+        self.active_booking_details_var = None
+        self.active_booking_status_label = None
         popup = tk.Toplevel(self.root)
         self.active_popup = popup
         popup.title(f"{alert.source} • Check-in hôm nay")
@@ -1119,11 +1136,12 @@ class BookingNotifierApp:
             hero_text, text="KHÁCH ĐẾN HÔM NAY", bg=self.COLORS["primary"], fg="#BFC9D8",
             font=("Segoe UI Semibold", 9),
         ).pack(anchor="w")
-        self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or ("Chờ chi tiết khách" if alert.source == "Booking.com" else "Chưa đọc được tên khách"))
-        self.active_room_var = tk.StringVar(master=popup, value=alert.room_type or "—")
-        self.active_revenue_var = tk.StringVar(master=popup, value=alert.total_revenue or "—")
+        placeholder = "Chờ bổ sung" if alert.source == "Booking.com" else "—"
+        self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or ("Booking mới đã nhận" if alert.source == "Booking.com" else "Chưa đọc được tên khách"))
+        self.active_room_var = tk.StringVar(master=popup, value=alert.room_type or placeholder)
+        self.active_revenue_var = tk.StringVar(master=popup, value=alert.total_revenue or placeholder)
         self.active_checkout_var = tk.StringVar(
-            master=popup, value=alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else "—",
+            master=popup, value=alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else placeholder,
         )
         self.active_nights_var = tk.StringVar(master=popup, value=str(alert.nights) if alert.nights is not None else "—")
         self.active_guest_label = tk.Label(
@@ -1132,10 +1150,12 @@ class BookingNotifierApp:
             wraplength=430, justify="left",
         )
         self.active_guest_label.pack(anchor="w", pady=(6, 0))
-        tk.Label(
+        source_badge = tk.Label(
             hero, text=alert.source.upper(), bg=accent, fg="#FFFFFF", font=("Segoe UI Semibold", 9),
             padx=14, pady=7,
-        ).pack(side="right", anchor="n", padx=28, pady=24)
+        )
+        source_badge.pack(side="right", anchor="n", padx=28, pady=24)
+        popup.booking_source_badge = source_badge
 
         # Reserve the footer before packing the details, so long room names
         # cannot push the two actions out of the window.
@@ -1143,11 +1163,41 @@ class BookingNotifierApp:
         footer.pack(fill="x", side="bottom")
         body = tk.Frame(popup, bg=self.COLORS["surface"], padx=28, pady=20)
         body.pack(fill="both", expand=True)
+        if alert.source == "Booking.com":
+            popup.booking_detail_body = body
+            popup.booking_detail_footer = footer
+            details_canvas = tk.Canvas(body, bg=self.COLORS["surface"], highlightthickness=0, height=1, width=1)
+            details_canvas.pack(side="left", fill="both", expand=True)
+            details_scrollbar = ttk.Scrollbar(body, orient="vertical", command=details_canvas.yview)
+            details_canvas.configure(yscrollcommand=details_scrollbar.set)
+            popup.booking_detail_canvas = details_canvas
+        else:
+            details_canvas = None
         info_card = tk.Frame(
-            body, bg=self.COLORS["surface_alt"], highlightbackground=self.COLORS["border"], highlightthickness=1,
+            details_canvas or body, bg=self.COLORS["surface_alt"], highlightbackground=self.COLORS["border"], highlightthickness=1,
             padx=18, pady=12,
         )
-        info_card.pack(fill="x")
+        if details_canvas is None:
+            info_card.pack(fill="x")
+        else:
+            card_window = details_canvas.create_window((0, 0), window=info_card, anchor="nw")
+
+            def sync_details_scroll(_event: object = None) -> None:
+                available_width = details_canvas.winfo_width()
+                if int(float(details_canvas.itemcget(card_window, "width"))) != available_width:
+                    details_canvas.itemconfigure(card_window, width=available_width)
+                content_height = info_card.winfo_reqheight()
+                if int(details_canvas.cget("height")) != content_height:
+                    details_canvas.configure(height=content_height)
+                details_canvas.configure(scrollregion=details_canvas.bbox("all"))
+                if content_height > details_canvas.winfo_height() + 1:
+                    if not details_scrollbar.winfo_manager():
+                        details_scrollbar.pack(side="right", fill="y", padx=(6, 0))
+                elif details_scrollbar.winfo_manager():
+                    details_scrollbar.pack_forget()
+
+            info_card.bind("<Configure>", sync_details_scroll)
+            details_canvas.bind("<Configure>", sync_details_scroll)
         rows = [
             ("Mã booking", alert.booking_id),
             ("Hạng phòng", alert.room_type or "—"),
@@ -1156,6 +1206,10 @@ class BookingNotifierApp:
             ("Số đêm", str(alert.nights) if alert.nights is not None else "—"),
             ("Tổng thu", alert.total_revenue or "—"),
         ]
+        # Booking.com reserves space for its asynchronous status and mute control.
+        # Keep nights beside checkout rather than adding another full row.
+        if alert.source == "Booking.com":
+            rows = [(label, value) for label, value in rows if label != "Số đêm"]
         detail_vars = {
             "Hạng phòng": self.active_room_var, "Tổng thu": self.active_revenue_var,
             "Check-out": self.active_checkout_var, "Số đêm": self.active_nights_var,
@@ -1172,13 +1226,49 @@ class BookingNotifierApp:
                 anchor="w", bg=self.COLORS["surface_alt"], fg=self.COLORS["text"],
                 font=("Segoe UI Semibold", 10), wraplength=380, justify="left",
             ).pack(side="left", fill="x", expand=True)
+            if alert.source == "Booking.com" and label == "Check-out":
+                tk.Label(row, text="SỐ ĐÊM", bg=self.COLORS["surface_alt"], fg=self.COLORS["muted"],
+                         font=("Segoe UI Semibold", 8)).pack(side="left", padx=(12, 8))
+                tk.Label(row, textvariable=self.active_nights_var, bg=self.COLORS["surface_alt"],
+                         fg=self.COLORS["text"], font=("Segoe UI Semibold", 10)).pack(side="left")
             if index < len(rows) - 1:
                 tk.Frame(info_card, bg="#E8E2D8", height=1).pack(fill="x", pady=(2, 0))
+        if details_canvas is not None:
+            def scroll_details(event: tk.Event) -> str:
+                if info_card.winfo_reqheight() > details_canvas.winfo_height():
+                    details_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+                return "break"
 
-        self.copy_feedback_var = tk.StringVar(value="Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
+            for row in info_card.winfo_children():
+                row.bind("<MouseWheel>", scroll_details)
+                for widget in row.winfo_children():
+                    widget.bind("<MouseWheel>", scroll_details)
+            details_canvas.bind("<MouseWheel>", scroll_details)
+
+        if alert.source == "Booking.com":
+            status_card = tk.Frame(footer, name="booking_status", bg=self.COLORS["surface_alt"],
+                                   highlightbackground=self.COLORS["border"], highlightthickness=1, padx=14, pady=12)
+            status_card.pack(fill="x", pady=(0, 10))
+            status_card.columnconfigure(0, weight=1)
+            self.active_booking_title_var = tk.StringVar(master=popup)
+            self.active_booking_details_var = tk.StringVar(master=popup)
+            self.active_booking_status_label = tk.Label(
+                status_card, textvariable=self.active_booking_title_var, anchor="w", justify="left",
+                bg=self.COLORS["surface_alt"], fg=self.COLORS["booking.com"], font=("Segoe UI Semibold", 11),
+            )
+            self.active_booking_status_label.grid(row=0, column=0, sticky="w", padx=(0, 12))
+            tk.Label(status_card, textvariable=self.active_booking_details_var, anchor="w", justify="left",
+                     wraplength=360, bg=self.COLORS["surface_alt"], fg=self.COLORS["muted"],
+                     font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(5, 0), padx=(0, 12))
+            self.active_mute_button = ttk.Button(
+                status_card, name="mute_booking_sound", text="Tắt chuông", command=self.mute_active_alert,
+                style="Secondary.TButton", takefocus=True,
+            )
+            self.active_mute_button.grid(row=0, column=1, rowspan=2, sticky="e", ipady=6)
+        self.copy_feedback_var = tk.StringVar(master=popup, value="Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
         tk.Label(
             footer, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 9), wraplength=560, justify="left",
         ).pack(anchor="w", pady=(0, 12))
         if alert.source in {"Expedia", "Traveloka"}:
             ttk.Button(
@@ -1186,18 +1276,15 @@ class BookingNotifierApp:
                 command=lambda selected=alert: self._request_source_print(selected),
                 style="Secondary.TButton", takefocus=True,
             ).pack(fill="x", ipady=8, pady=(0, 12))
-        if alert.source == "Booking.com":
-            self.active_booking_details_var = tk.StringVar(master=popup, value="Đã lấy đầy đủ chi tiết từ Extranet." if alert.details_loaded_at else "Email chỉ có mã/ngày đến. Đăng nhập trong Cài đặt để tự bổ sung chi tiết.")
-            tk.Label(footer, textvariable=self.active_booking_details_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
-                     wraplength=560, justify="left", font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))
         actions = tk.Frame(footer, name="booking_actions", bg=self.COLORS["surface"])
         actions.pack(fill="x")
         actions.columnconfigure((0, 1), weight=1, uniform="popup_actions")
         actions.rowconfigure(0, minsize=96)
-        ttk.Button(
+        self.active_copy_button = ttk.Button(
             actions, name="copy_booking", text="Sao chép", command=self.copy_active_alert,
             style="Popup.Primary.TButton", takefocus=True,
-        ).grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        )
+        self.active_copy_button.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         ttk.Button(
             actions, name="close_notification", text="Đóng thông báo", command=self.acknowledge_alert,
             style="Popup.Secondary.TButton", takefocus=True,
@@ -1210,6 +1297,7 @@ class BookingNotifierApp:
         if alert.source in {"Expedia", "Traveloka"}:
             self.active_menu.add_command(label=f"In phiếu {alert.source} - 1 trang A4",
                                          command=lambda selected=alert: self._request_source_print(selected))
+        self._refresh_booking_popup_state()
         popup.bind("<Button-3>", self.show_active_context_menu)
         popup.bind("<Button-2>", self.show_active_context_menu)
         popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
@@ -1243,6 +1331,9 @@ class BookingNotifierApp:
         hero = getattr(self, "active_hero", None)
         if popup is None or label is None or hero is None:
             return
+        popup.update_idletasks()
+        if hasattr(popup, "booking_detail_body"):
+            label.configure(wraplength=max(180, popup.winfo_width() - popup.booking_source_badge.winfo_reqwidth() - 112))
         limit = max(640, popup.winfo_screenheight() - 72)
         base = popup.booking_base_height
         for size in range(22, 13, -1):
@@ -1252,6 +1343,10 @@ class BookingNotifierApp:
             height = base + header_height - 118
             if height <= limit:
                 break
+        if hasattr(popup, "booking_detail_body"):
+            # Long multi-room details scroll; never put the actions off-screen.
+            height = min(limit, max(height, header_height + popup.booking_detail_body.winfo_reqheight()
+                                    + popup.booking_detail_footer.winfo_reqheight()))
         hero.configure(height=header_height)
         x, y = popup.winfo_x(), min(popup.winfo_y(), max(0, popup.winfo_screenheight() - height - 64))
         popup.geometry(f"{popup.winfo_width()}x{height}+{x}+{y}")
@@ -1341,9 +1436,53 @@ class BookingNotifierApp:
     def copy_active_alert(self) -> None:
         if not self.active_alert:
             return
+        if self.active_alert.source == "Booking.com" and not booking_com_details_ready(self.active_alert):
+            self._refresh_booking_popup_state()
+            if hasattr(self, "copy_feedback_var"):
+                self.copy_feedback_var.set("Sao chép sẽ mở khi đã lấy đủ thông tin booking.")
+            return
         copied = self._copy_alerts_to_clipboard([self.active_alert], "Đã sao chép booking sang Excel")
         if copied and hasattr(self, "copy_feedback_var"):
             self.copy_feedback_var.set("Đã sao chép • Mở Excel và nhấn Ctrl+V")
+
+    def mute_active_alert(self) -> None:
+        """Silence this PC notification only; keep fetching, displaying and queuing."""
+        alert = getattr(self, "active_alert", None)
+        if alert is None or alert.source != "Booking.com" or getattr(self, "active_sound_muted", False):
+            return
+        self.stop_sound()
+        self.active_sound_muted = True
+        button = getattr(self, "active_mute_button", None)
+        if button is not None:
+            button.configure(text="Đã tắt chuông", state="disabled")
+        self._refresh_booking_popup_state()
+
+    def _refresh_booking_popup_state(self) -> None:
+        alert = getattr(self, "active_alert", None)
+        if alert is None or alert.source != "Booking.com":
+            return
+        state = booking_com_popup_state(alert, bool(getattr(self, "config", {}).get("booking_com_enrichment", True)),
+                                        getattr(self, "booking_com_popup_status", ""))
+        message = state.message
+        if getattr(self, "active_sound_muted", False):
+            message = message.replace("Bạn có thể tắt âm trong lúc chờ.", "Chuông đã tắt; popup vẫn chờ thông tin.")
+            message = message.replace("bạn có thể tắt âm trong lúc chờ.", "chuông đã tắt; popup vẫn chờ thông tin.")
+        for variable_name, value in (("active_booking_title_var", state.title),
+                                     ("active_booking_details_var", message)):
+            variable = getattr(self, variable_name, None)
+            if variable is not None:
+                variable.set(value)
+        label = getattr(self, "active_booking_status_label", None)
+        if label is not None:
+            label.configure(fg=self.COLORS["booking.com"] if state.phase in {"loading", "ready"}
+                            else "#835C22")
+        button = getattr(self, "active_copy_button", None)
+        if button is not None:
+            button.configure(state="normal" if state.ready else "disabled")
+        menu = getattr(self, "active_menu", None)
+        if menu is not None:
+            menu.entryconfigure(0, state="normal" if state.ready else "disabled")
+        self._fit_popup_guest_header()
 
     def _refresh_pending_details(self) -> None:
         """Update repaired details in-place: preserve the popup, focus and sound."""
@@ -1362,20 +1501,21 @@ class BookingNotifierApp:
                     setattr(alert, field, value)
                     changed = True
             if alert is self.active_alert and changed:
-                if getattr(self, "active_booking_details_var", None) is not None and alert.details_loaded_at:
-                    self.active_booking_details_var.set("Đã lấy đầy đủ chi tiết từ Extranet.")
+                placeholder = "Chờ bổ sung" if alert.source == "Booking.com" else "—"
                 if self.active_guest_var is not None:
-                    self.active_guest_var.set(alert.guest_name or "Chưa đọc được tên khách")
+                    self.active_guest_var.set(alert.guest_name or ("Booking mới đã nhận" if alert.source == "Booking.com"
+                                                                  else "Chưa đọc được tên khách"))
                 if self.active_room_var is not None:
-                    self.active_room_var.set(alert.room_type or "—")
+                    self.active_room_var.set(alert.room_type or placeholder)
                 for variable_name, value in (
-                    ("active_revenue_var", alert.total_revenue or "—"),
-                    ("active_checkout_var", alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else "—"),
+                    ("active_revenue_var", alert.total_revenue or placeholder),
+                    ("active_checkout_var", alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else placeholder),
                     ("active_nights_var", str(alert.nights) if alert.nights is not None else "—"),
                 ):
                     variable = getattr(self, variable_name, None)
                     if variable is not None:
                         variable.set(value)
+                self._refresh_booking_popup_state()
                 self._fit_popup_guest_header()
                 try:
                     self.f92_worker.notify(alert, play_sound=False)
@@ -1408,6 +1548,11 @@ class BookingNotifierApp:
         self.active_checkout_var = None
         self.active_nights_var = None
         self.active_booking_details_var = None
+        self.active_booking_title_var = None
+        self.active_booking_status_label = None
+        self.active_copy_button = None
+        self.active_mute_button = None
+        self.active_sound_muted = False
         self.active_guest_label = None
         self.active_hero = None
         self.refresh_history()
@@ -1623,7 +1768,7 @@ class BookingNotifierApp:
         return "break"
 
     def _copy_alerts_to_clipboard(self, alerts: list[BookingEvent], status: str) -> bool:
-        if any(alert.source == "Booking.com" and not all((alert.guest_name, alert.room_type, alert.checkout_date, alert.total_revenue))
+        if any(alert.source == "Booking.com" and not booking_com_details_ready(alert)
                for alert in alerts):
             messagebox.showinfo("Chưa đủ chi tiết Booking.com", "Email Booking.com này chỉ có mã/ngày đến. Hãy đăng nhập Booking.com trong Cài đặt và đợi lấy đủ chi tiết trước khi chép Excel.",
                                 parent=getattr(self, "active_popup", None) or self.root)
