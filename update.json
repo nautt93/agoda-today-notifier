@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.21",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.21/Booking-Checkin-Hom-Nay-1.7.21.exe",
-  "sha256": "a8128d8be793bca6ca70fc061e715aff1b32defddbd0400f0367b75acb345db0",
-  "size": 64259997,
-  "notes": "Tích hợp âm Booking.com từ file booking com.mp3 được cung cấp, giữ nguyên bản MP3 và kèm PCM của cùng bản ghi âm khi Windows không phát được MP3. Tự bổ sung mặc định Booking.com một lần, không thay âm Agoda/Expedia/Traveloka/Trip, âm chung hoặc lựa chọn riêng đã lưu. Giữ email/mật khẩu, hồ sơ đăng nhập Booking.com, lịch sử và mốc UID; không đổi parser hoặc quét lại thư để đổi âm. Popup chỉ phát âm đúng nguồn, không phát lại khi bổ sung chi tiết hoặc sao chép Excel; Đóng thông báo dừng âm. Giữ cơ chế chỉ báo booking mới check-in hôm nay, khay, F92, Excel 9 cột, in Expedia/Traveloka và OTA an toàn. Đã kiểm tra Windows, driver trình duyệt trong EXE và cập nhật EXE thực tế trên ba hồ sơ cũ.",
-  "signature": "8lVUxpafTXSxOkdpAtzxBl6gauUHe9OH+ayuKQfueS5Fknj/DfdoSLpVmV9KwD0PqWc3ZK4DAXclwP2lkMgEAA=="
+  "version": "1.7.22",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.22/Booking-Checkin-Hom-Nay-1.7.22.exe",
+  "sha256": "46ba0bea965c6cd1415d5f27f2710c1eb5c91bc31ad595d3c9916912a1cba820",
+  "size": 64269431,
+  "notes": "Cải thiện phiên Booking.com: giữ cùng một trình duyệt chạy nền, tự ẩn sau khi xác nhận đăng nhập; thêm nút Ẩn trình duyệt giữ nguyên tab và phiên. Mở lại không khởi động lại trình duyệt hay đặt lại OTP đang nhập. Cửa sổ nền riêng giữ tiến trình/cookie phiên khi đóng cửa sổ Booking.com bằng X; ưu tiên nút Ẩn để giữ cả sessionStorage của tab. Lỗi đọc chi tiết tạm thời không đóng phiên; thử lại sau khoảng một phút. Không tự nhập OTP, không lưu bản sao token/cookie vào JSON, không can thiệp Chrome/Edge thường. Booking.com vẫn có thể yêu cầu OTP khi hết hạn/thu hồi phiên. Giữ 5 âm nguồn, popup/Excel/F92, lịch sử, cấu hình và UID; không đổi parser hoặc báo lặp. Đã kiểm tra giữ phiên trên Windows, đóng cửa sổ thật, phiên trong EXE và OTA trên ba hồ sơ cũ.",
+  "signature": "qKaxrZPB4iz3ZOpFROjcaS5druJDT9ZTFc31gTNb39niA7GrnC9AS5dr6xDyBaEjm+q51bARkt9f2FvEBAaBAg=="
 }
