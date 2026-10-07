@@ -113,9 +113,13 @@ class BookingComDetailError(ValueError):
 DETAIL_SNAPSHOT_JS = """() => {
     const visible = e => e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
     const text = e => (e?.innerText || '').replace(/\\s+/g, ' ').trim();
+    const label = e => text(e).normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/đ/g, 'd').toLowerCase().replace(/[:\\s]+$/, '');
+    const allowed = new Set(['nhan phong', 'tra phong', 'tong so can', 'tong tien phong', 'ma so dat phong',
+        'check-in', 'check-out', 'total units', 'total rooms', 'number of rooms', 'total room price',
+        'total price', 'reservation number', 'booking number']);
     const main = document.querySelector('#main-content');
     const fields = [...(main?.querySelectorAll('.res-content__label') || [])]
-        .filter(visible).map(e => [text(e), visible(e.nextElementSibling) ? text(e.nextElementSibling) : '']);
+        .filter(e => visible(e) && allowed.has(label(e))).map(e => [text(e), visible(e.nextElementSibling) ? text(e.nextElementSibling) : '']);
     const names = [...(main?.querySelectorAll('[data-test-id="reservation-overview-name"]') || [])].filter(visible).map(text);
     const rooms = [...(main?.querySelectorAll('.res-room-title__name') || [])].filter(visible).map(text);
     const u = new URL(location.href);

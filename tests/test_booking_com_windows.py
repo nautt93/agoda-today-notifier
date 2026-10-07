@@ -14,7 +14,7 @@ import pytest
 
 import app as desktop
 from app import BookingNotifierApp
-from booking_notifier.booking_com import canonical_details_url
+from booking_notifier.booking_com import DETAIL_SNAPSHOT_JS, canonical_details_url
 from booking_notifier.booking_com_browser import BookingComBrowser, packaged_browser_smoke
 from booking_notifier.config import ConfigStore
 from booking_notifier.excel_export import excel_tsv
@@ -38,6 +38,8 @@ def test_installed_browser_real_selectors_hidden_print_excluded_full_multiroom_a
         client._launch()
         client.context.route("**/*", lambda route: route.fulfill(status=200, content_type="text/html", body=markup))
         full = client.fetch(event)
+        snapshot = client._page().evaluate(DETAIL_SNAPSHOT_JS)
+        assert len(snapshot["fields"]) == 5 and all("Hoa hồng" not in pair[0] for pair in snapshot["fields"])
         assert full.guest_name == "NGUYỄN SYNTHETIC FULL GUEST"
         assert full.room_type == "Deluxe Double Room x2; Triple City View x1" and full.nights == 2
         assert excel_tsv(full).split("\t")[5] == "1200000"
