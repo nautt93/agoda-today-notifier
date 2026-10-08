@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import threading
 from collections.abc import Iterable
 from datetime import date, datetime
@@ -333,8 +334,12 @@ class StateStore:
                 self.data["processed_keys"] = existing[-20000:]
                 self._save_locked()
 
-    def booking_com_candidates(self, today: date, limit: int = 20) -> list[BookingEvent]:
+    def booking_com_candidates(
+        self, today: date, limit: int = 20, *, include_unlinked: bool = False,
+    ) -> list[BookingEvent]:
         """Only enrich known arrivals today, including already closed notifications."""
+        from .excel_export import excel_amount_value
+
         with self.lock:
             records = {self._record_storage_id(record): record for record in
                        [*self.data["history"], *self.data["pending_alerts"], *self.data["bookings"].values()]}
@@ -351,9 +356,11 @@ class StateStore:
                 # The state cache uses "active"; browser enrichment is a NEW
                 # confirmation, not a booking lifecycle change.
                 event.status = BOOKING_STATUS_NEW
-                if not event.details_url:
+                if not event.details_url and not include_unlinked:
                     continue
-                if event.details_loaded_at and all((event.guest_name, event.room_type, event.total_revenue, event.checkout_date)):
+                if (event.details_loaded_at and event.checkout_date and event.checkout_date > today
+                        and all(str(value or "").strip() for value in (event.guest_name, event.room_type))
+                        and excel_amount_value(event.total_revenue)):
                     candidates.pop(event.storage_id, None)
                 else:
                     candidates[event.storage_id] = event
@@ -392,6 +399,51 @@ class StateStore:
             if changed:
                 self._save_locked()
             return changed
+
+    def enrich_booking_com_manual(self, event: BookingEvent, today: date) -> bool:
+        """Save user-entered details for a known today's stay, without changing links or alerts.
+
+        Manual entry can repair a short email without an Extranet link. It must
+        not relax the URL verification used by automated browser enrichment.
+        A matching unchanged save is successful, while unknown or stale stays
+        remain untouched.
+        """
+        from .excel_export import excel_amount_value
+
+        if (event.source != "Booking.com" or event.status not in {BOOKING_STATUS_NEW, "active"}
+                or not isinstance(event.booking_id, str)
+                or not re.fullmatch(r"[0-9]{6,20}", event.booking_id)
+                or type(event.checkin_date) is not date or event.checkin_date != today
+                or type(event.checkout_date) is not date or event.checkout_date <= event.checkin_date
+                or not str(event.details_loaded_at or "").strip()):
+            return False
+        details = {
+            field: str(getattr(event, field) or "").strip()
+            for field in ("guest_name", "room_type", "total_revenue", "details_loaded_at")
+        }
+        if (not all(details.values()) or not excel_amount_value(details["total_revenue"])):
+            return False
+        details["checkout_date"] = event.checkout_date.isoformat()
+        with self.lock:
+            current = self.data["bookings"].get(event.storage_id, {})
+            if current and (current.get("checkin_date") != today.isoformat()
+                            or current.get("status") in {"cancelled", "modified"}):
+                return False
+            records = [*self.data["history"], *self.data["pending_alerts"], *self.data["bookings"].values()]
+            matching = [record for record in records
+                        if self._record_storage_id(record) == event.storage_id
+                        and record.get("checkin_date") == today.isoformat()]
+            if not matching or any(record.get("status") in {"cancelled", "modified"} for record in matching):
+                return False
+            changed = False
+            for record in matching:
+                for field, value in details.items():
+                    if record.get(field) != value:
+                        record[field] = value
+                        changed = True
+            if changed:
+                self._save_locked()
+            return True
 
     def pending_for_date(self, today: date) -> list[BookingEvent]:
         result: list[BookingEvent] = []
@@ -443,6 +495,15 @@ class StateStore:
                 booking["alerted_at"] = _now()
             if not already_acknowledged:
                 history_record = event.to_dict()
+                if (event.source == "Booking.com" and booking and booking.get("details_loaded_at")
+                        and booking.get("checkin_date") == today_text):
+                    # Closing immediately after manual/browser enrichment can
+                    # race the queued UI refresh. Retain the saved correction,
+                    # even when the stale popup field was already nonempty.
+                    for field in ("guest_name", "room_type", "total_revenue", "checkout_date",
+                                  "details_url", "details_loaded_at"):
+                        if booking.get(field):
+                            history_record[field] = booking[field]
                 history_record["acknowledged_at"] = _now()
                 history_record["pending_key"] = f"{storage_id}:{today_text}"
                 self.data["history"].append(history_record)

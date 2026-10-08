@@ -60,18 +60,38 @@ class _Links(HTMLParser):
             self.links.extend(value for key, value in attrs if key == "href" and value)
 
 
+def _booking_com_subject_status(subject: str) -> str:
+    title = normalized(subject)
+    if re.search(r"\b(?:cancelled|canceled|cancellation|huy dat phong|dat phong.*huy)\b", title):
+        return BOOKING_STATUS_CANCELLED
+    if re.search(r"\b(?:modified|modification|amended|changed|updated|thay doi|chinh sua)\b", title):
+        return BOOKING_STATUS_MODIFIED
+    if any(term in title for term in ("dat phong moi", "new booking", "new reservation")):
+        return BOOKING_STATUS_NEW
+    return ""
+
+
+def is_booking_com_nonbooking_notice(message: Message) -> bool:
+    """Recognize explicit unrelated subjects, never discard unknown booking mail."""
+    if len(message.get_all("From", [])) != 1 or sender_source(message.get("From", "")) != "Booking.com":
+        return False
+    subject = str(message.get("Subject", ""))
+    if _booking_com_subject_status(subject):
+        return False
+    title = normalized(subject)
+    return bool(re.match(
+        r"^(?:booking\.com\s*[-:–]?\s*)?"
+        r"(?:newsletter|payment reminder|review requested|ban tin|nhac nho thanh toan|nhac thanh toan|yeu cau danh gia)\b",
+        title,
+    ))
+
+
 def parse_booking_com_email(message: Message) -> BookingEvent | None:
     if len(message.get_all("From", [])) != 1 or sender_source(message.get("From", "")) != "Booking.com":
         return None
     subject = str(message.get("Subject", ""))
-    title = normalized(subject)
-    if re.search(r"\b(?:cancelled|canceled|cancellation|huy dat phong|dat phong.*huy)\b", title):
-        status = BOOKING_STATUS_CANCELLED
-    elif re.search(r"\b(?:modified|modification|amended|changed|updated|thay doi|chinh sua)\b", title):
-        status = BOOKING_STATUS_MODIFIED
-    elif any(term in title for term in ("dat phong moi", "new booking", "new reservation")):
-        status = BOOKING_STATUS_NEW
-    else:
+    status = _booking_com_subject_status(subject)
+    if not status:
         return None
     body = message_body_text(message)
     ids = set(re.findall(r"\(\s*([0-9]{6,20})(?:\s*[,)]|\s*$)", subject))

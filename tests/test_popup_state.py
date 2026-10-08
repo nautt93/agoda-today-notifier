@@ -50,6 +50,18 @@ def test_missing_alert_is_unavailable_and_zero_amount_string_is_not_treated_as_m
     assert booking_com_details_ready(replace(complete_event(), total_revenue="0"))
 
 
+@pytest.mark.parametrize("amount", ["VND", "unknown", " "])
+def test_nonnumeric_total_cannot_enable_excel_copy(amount):
+    event = replace(complete_event(), total_revenue=amount)
+    assert not booking_com_details_ready(event)
+    assert not booking_com_popup_state(event, enrichment_mode="manual").ready
+
+
+@pytest.mark.parametrize("checkout", [date.today(), date.today() - timedelta(days=1), date.today().isoformat()])
+def test_invalid_stay_cannot_enable_excel_copy(checkout):
+    assert not booking_com_details_ready(replace(complete_event(), checkout_date=checkout))
+
+
 @pytest.mark.parametrize("enabled", [False, True])
 @pytest.mark.parametrize("status", [
     "Booking.com: cần đăng nhập trong Cài đặt.",

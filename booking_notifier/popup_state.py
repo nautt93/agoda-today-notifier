@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
+from datetime import date
 
 from .booking_com import canonical_details_url
+from .excel_export import excel_amount_value
 from .models import BookingEvent
 
 
@@ -18,7 +20,8 @@ class BookingComPopupState:
 
 def booking_com_details_ready(alert: BookingEvent | None) -> bool:
     """Require actual fields, including legacy records without a load timestamp."""
-    return bool(alert is not None and alert.checkout_date and all(
+    return bool(alert is not None and type(alert.checkin_date) is date and type(alert.checkout_date) is date
+                and alert.checkout_date > alert.checkin_date and excel_amount_value(alert.total_revenue) and all(
         str(value or "").strip() for value in (alert.guest_name, alert.room_type, alert.total_revenue)
     ))
 
