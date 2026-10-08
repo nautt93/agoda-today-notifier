@@ -417,6 +417,8 @@ def test_windows_ui_builds_with_excel_context_menu():
         assert app.history_tree.bind("<Control-c>")
 
         app.config["f92_enabled"] = False
+        # Notification policy now uses saved configuration, not checkbox drafts.
+        app.config["quiet_hours_enabled"] = False
         app.quiet_var.set(False)
         app.play_sound = lambda: None
         app.enqueue_alert(BookingEvent(
