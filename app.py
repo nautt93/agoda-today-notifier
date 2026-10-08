@@ -593,6 +593,11 @@ class BookingNotifierApp:
                      values=("auto", "msedge", "chrome"), state="readonly", width=10).pack(side="left", padx=(8, 0))
         ttk.Button(row, name="booking_com_login", text="Đăng nhập Booking.com", command=self.login_booking_com,
                    style="Secondary.TButton").pack(side="left", padx=8)
+        # Kept as a compatibility action for the legacy experimental browser
+        # mode.  In the recommended manual mode this only updates the status;
+        # no hidden browser is started or controlled.
+        ttk.Button(row, name="booking_com_background", text="Ẩn trình duyệt", command=self.background_booking_com,
+                   style="Secondary.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(row, name="booking_com_manual", text="Nhập/dán chi tiết", command=self.open_booking_com_manual_dialog,
                    style="Secondary.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(row, text="Lấy lại chi tiết", command=self.refresh_booking_com, style="Secondary.TButton").pack(side="left")
