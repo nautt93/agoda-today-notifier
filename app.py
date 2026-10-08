@@ -1510,9 +1510,14 @@ class BookingNotifierApp:
             status_card = tk.Frame(footer, name="booking_status", bg=self.COLORS["surface_alt"],
                                    highlightbackground=self.COLORS["border"], highlightthickness=1, padx=14, pady=12)
             status_card.pack(fill="x", pady=(0, 10))
+            # The manual action is only shown in the new safe mode.  Keeping
+            # the legacy visible-mode card to two columns preserves its
+            # compact layout and avoids squeezing the status text.
+            manual_mode = str(self.config.get("booking_com_enrichment_mode", "visible")) == "manual"
             status_card.columnconfigure(0, weight=1)
             status_card.columnconfigure(1, weight=0)
-            status_card.columnconfigure(2, weight=0)
+            if manual_mode:
+                status_card.columnconfigure(2, weight=0)
             self.active_booking_title_var = tk.StringVar(master=popup)
             self.active_booking_details_var = tk.StringVar(master=popup)
             self.active_booking_status_label = tk.Label(
@@ -1523,17 +1528,18 @@ class BookingNotifierApp:
             tk.Label(status_card, textvariable=self.active_booking_details_var, anchor="w", justify="left",
                      wraplength=360, bg=self.COLORS["surface_alt"], fg=self.COLORS["muted"],
                      font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(5, 0), padx=(0, 12))
-            self.active_manual_button = ttk.Button(
-                status_card, name="manual_booking_details", text="Nhập chi tiết",
-                command=lambda selected=alert: self.open_booking_com_manual_dialog(selected),
-                style="Secondary.TButton", takefocus=True,
-            )
-            self.active_manual_button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 8), ipady=6)
+            if manual_mode:
+                self.active_manual_button = ttk.Button(
+                    status_card, name="manual_booking_details", text="Nhập chi tiết",
+                    command=lambda selected=alert: self.open_booking_com_manual_dialog(selected),
+                    style="Secondary.TButton", takefocus=True,
+                )
+                self.active_manual_button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 8), ipady=6)
             self.active_mute_button = ttk.Button(
                 status_card, name="mute_booking_sound", text="Tắt chuông", command=self.mute_active_alert,
                 style="Secondary.TButton", takefocus=True,
             )
-            self.active_mute_button.grid(row=0, column=2, rowspan=2, sticky="e", ipady=6)
+            self.active_mute_button.grid(row=0, column=2 if manual_mode else 1, rowspan=2, sticky="e", ipady=6)
         self.copy_feedback_var = tk.StringVar(master=popup, value="Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
         tk.Label(
             footer, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
