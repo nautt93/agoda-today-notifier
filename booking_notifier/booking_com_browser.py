@@ -16,13 +16,21 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from .booking_com import ADMIN_HOME, DETAIL_SNAPSHOT_JS, canonical_details_url, parse_booking_com_details
+from .booking_com import (
+    ADMIN_HOME,
+    DETAIL_SNAPSHOT_JS,
+    BookingComDetailError,
+    canonical_details_url,
+    parse_booking_com_details,
+)
 from .browser_windows import hide_owned_browser_windows, set_owned_browser_window_visible
 from .config import atomic_json_write
 from .models import BookingEvent
 from .state import StateStore
 
 LOGIN_REQUIRED = "Booking.com: cần đăng nhập trong Cài đặt → Đăng nhập Booking.com. Email vẫn báo bình thường."
+DETAIL_READY_TIMEOUT_MS = 15_000
+DETAIL_READY_POLL_MS = 250
 AUTHENTICATED_PAGE_JS = """() => {
     const visible = el => !!el && !!el.getClientRects().length;
     const challenges = document.querySelectorAll(
@@ -39,6 +47,10 @@ AUTHENTICATED_PAGE_JS = """() => {
 
 class BookingComBrowserError(RuntimeError):
     pass
+
+
+class BookingComReservationError(BookingComBrowserError):
+    """This authenticated reservation failed; other reservations may still work."""
 
 
 class BookingComBrowser:
@@ -213,7 +225,7 @@ class BookingComBrowser:
     def fetch(self, event: BookingEvent) -> BookingEvent:
         safe = canonical_details_url(event.details_url, event.booking_id)
         if not safe:
-            raise BookingComBrowserError("Booking.com: email không có liên kết chi tiết hợp lệ.")
+            raise BookingComReservationError("Booking.com: email không có liên kết chi tiết hợp lệ.")
         self._launch()
         page = self._page()
         if (self.awaiting_login or self.visible) and not self._authenticated_page(page):
@@ -225,12 +237,30 @@ class BookingComBrowser:
         if urlsplit(page.url).hostname != "admin.booking.com":
             self.awaiting_login = True
             raise BookingComBrowserError(LOGIN_REQUIRED)
+        deadline = time.monotonic() + DETAIL_READY_TIMEOUT_MS / 1000
         try:
-            page.locator('[data-test-id="reservation-overview-name"]').filter(visible=True).first.wait_for(timeout=10000)
-            if not self._authenticated_page(page):
-                self.awaiting_login = True
-                raise BookingComBrowserError(LOGIN_REQUIRED)
-            enriched = parse_booking_com_details(page.evaluate(DETAIL_SNAPSHOT_JS), event)
+            page.locator('[data-test-id="reservation-overview-name"]').filter(visible=True).first.wait_for(
+                timeout=DETAIL_READY_TIMEOUT_MS,
+            )
+            # Extranet hydrates rooms, stay dates and totals after the guest name.
+            # Wait on this same page for a fully validated snapshot, not another
+            # navigation that would restart its asynchronous loading every wake.
+            while True:
+                if not self._authenticated_page(page):
+                    self.awaiting_login = True
+                    raise BookingComBrowserError(LOGIN_REQUIRED)
+                try:
+                    enriched = parse_booking_com_details(page.evaluate(DETAIL_SNAPSHOT_JS), event)
+                    break
+                except BookingComDetailError as exc:
+                    remaining_ms = int((deadline - time.monotonic()) * 1000)
+                    if remaining_ms <= 0:
+                        # Parser messages are fixed field/identity guidance, not
+                        # page contents, guest data or session-bearing URLs.
+                        raise BookingComReservationError(
+                            f"Booking.com {event.booking_id}: chưa lấy được chi tiết. {exc}",
+                        ) from None
+                    page.wait_for_timeout(min(DETAIL_READY_POLL_MS, max(1, remaining_ms)))
             if self.awaiting_login or not self.visible:
                 self.awaiting_login = False
                 # Chromium can restore a native window while creating/navigating
@@ -244,7 +274,10 @@ class BookingComBrowser:
             if not self._authenticated_page(page):
                 self.awaiting_login = True
                 raise BookingComBrowserError(LOGIN_REQUIRED) from None
-            raise BookingComBrowserError("Booking.com: chưa lấy được chi tiết. Hãy đăng nhập/mở booking trong Cài đặt; thông báo email vẫn được giữ.") from None
+            raise BookingComReservationError(
+                f"Booking.com {event.booking_id}: chưa lấy được chi tiết; trang chưa tải đủ. "
+                "App sẽ thử lại, các booking khác vẫn tiếp tục được đọc.",
+            ) from None
 
     def close(self) -> None:
         if self.context is not None:
@@ -310,8 +343,8 @@ class BookingComWorker(threading.Thread):
         if not self.config.get("booking_com_enrichment", True) or self.stopping.is_set():
             return
         today = date.today()
-        for event in self.state.booking_com_candidates(today):
-            if self.stopping.is_set():
+        for event in self.state.booking_com_candidates(today)[:20]:
+            if self.stopping.is_set() or not self.commands.empty():
                 return
             if self.retry_after.get(event.storage_id, 0) > time.monotonic():
                 continue
@@ -322,6 +355,13 @@ class BookingComWorker(threading.Thread):
                     self.events.put(("history_changed", None))
                     self._status(f"Booking.com {event.booking_id}: đã bổ sung họ tên/hạng phòng/Excel; không báo lặp.")
                 self.retry_after.pop(event.storage_id, None)
+            except BookingComReservationError as exc:
+                # Authenticated failure for this reservation only. Retire its
+                # turn until retry time, but do not starve later valid bookings.
+                self.retry_after[event.storage_id] = time.monotonic() + (20 if self.login_polling else 60)
+                self._status(str(exc))
+                if not self.commands.empty():
+                    return  # Let Login/Configure/Stop run before another fetch.
             except Exception as exc:
                 self.retry_after[event.storage_id] = time.monotonic() + (20 if self.login_polling else 60)
                 self._status(str(exc) if isinstance(exc, BookingComBrowserError) else
@@ -425,6 +465,22 @@ def packaged_browser_smoke(output: Path) -> int:
             enriched = parse_booking_com_details(page.evaluate(DETAIL_SNAPSHOT_JS), event)
             assert enriched.guest_name == "SYNTHETIC FULL GUEST" and enriched.room_type == "Deluxe Room x2"
             assert enriched.total_revenue == "VND 800.000" and enriched.checkout_date == tomorrow
+            # Exercise the real frozen fetch path, not just a static parser:
+            # show the guest first and asynchronously render rooms/totals later.
+            delayed_details = ''.join(
+                f'<p class="res-content__label">{label}</p><p>{value}</p>'
+                for label, value in (("Tổng số căn", "2"), ("Tổng tiền phòng", "VND 800.000"))
+            ) + '<div class="res-room-title__name">Deluxe Room</div>' * 2
+            markup = '<!doctype html><meta charset="utf-8"><main id="main-content">' + ''.join(
+                f'<p class="res-content__label">{label}</p><p>{value}</p>'
+                for label, value in (("Mã số đặt phòng:", event.booking_id), ("Nhận phòng", today.isoformat()),
+                                     ("Trả phòng", tomorrow.isoformat()))
+            ) + '<span data-test-id="reservation-overview-name">SYNTHETIC FULL GUEST</span></main>' + \
+                '<script>setTimeout(() => {document.querySelector("#main-content").insertAdjacentHTML("beforeend", ' + \
+                repr(delayed_details) + '); window.syntheticDetailsReady = true;}, 1200);</script>'
+            stage = "asynchronous-details"
+            assert client.fetch(event).room_type == enriched.room_type
+            assert page.evaluate("window.syntheticDetailsReady === true") is True
             stage = "live-session"
             context, pid = client.context, client._browser_pid()
             page.evaluate("sessionStorage.setItem('synthetic-tab-session', 'not-a-real-credential')")
@@ -444,6 +500,7 @@ def packaged_browser_smoke(output: Path) -> int:
             assert any(cookie["name"] == "synthetic-session-cookie" and cookie["expires"] == -1
                        for cookie in context.cookies())
             atomic_json_write(output, {"ok": True, "driver": "playwright", "full_details": True,
+                                       "asynchronous_details_ready": True,
                                        "live_session_kept": True, "session_kept_after_window_close": True})
             client.close()
             return 0

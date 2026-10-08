@@ -9,7 +9,7 @@ from typing import Any
 from .quiet_hours import normalize_quiet_times
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.24"
+APP_VERSION = "1.7.25"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"

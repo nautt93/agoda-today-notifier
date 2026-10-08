@@ -64,6 +64,7 @@ def test_source_driver_smoke_before_freezing(tmp_path):
     report = tmp_path / "report.json"
     result = packaged_browser_smoke(report)
     assert result == 0 and '"ok": true' in report.read_text(encoding="utf-8"), report.read_text(encoding="utf-8")
+    assert '"asynchronous_details_ready": true' in report.read_text(encoding="utf-8")
 
 
 def test_native_basic_and_enriched_popup_same_window_two_big_actions_no_second_sound_and_exact_excel(tmp_path, monkeypatch):

@@ -55,7 +55,7 @@ jobs:
           if (Test-Path $report) { Get-Content $report }
           if ($proc.ExitCode -ne 0) { throw "Frozen Booking.com browser check failed" }
           $result = Get-Content $report | ConvertFrom-Json
-          if (!$result.ok -or !$result.live_session_kept -or !$result.session_kept_after_window_close) { throw "Browser/session check did not complete" }
+          if (!$result.ok -or !$result.asynchronous_details_ready -or !$result.live_session_kept -or !$result.session_kept_after_window_close) { throw "Browser/session/detail readiness check did not complete" }
       - name: Verify packaged OTA and application restart
         run: python scripts/smoke_packaged_update.py dist/Booking-Checkin-Hom-Nay.exe
       - uses: actions/upload-artifact@v7.0.1
@@ -108,7 +108,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Thêm thời gian yên lặng tùy chọn giờ/phút bắt đầu và kết thúc trong Cài đặt, hỗ trợ cùng ngày và qua đêm. Nút Lưu thời gian áp dụng ngay mà không cần khởi động lại email/trình duyệt; mặc định cũ 00:00–08:00 được giữ. Trong giờ yên lặng vẫn đọc và lưu booking nhưng tạm dừng popup, chuông và cảnh báo F92; popup đang mở được giữ chờ, không xác nhận hay bỏ booking. Hết giờ chỉ báo booking check-in vẫn là hôm nay, không báo lặp hoặc nhắc ngày cũ. Chặn giờ không hợp lệ/hai mốc trùng nhau trước khi lưu; giữ nguyên tài khoản, 5 âm nguồn, 9 cột Excel, popup Booking.com v1.7.23, phiên trình duyệt, lịch sử và UID. Đã kiểm tra thời gian qua đêm/đúng mốc phút, hàng đợi, F92, giao diện Windows, EXE và OTA trên ba hồ sơ cũ." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Sửa lấy chi tiết Booking.com: chờ phòng, ngày trả và tổng tiền tải đầy đủ trên cùng trang, không chỉ chờ tên rồi đọc quá sớm. Booking lỗi dữ liệu được thử lại riêng, không chặn các booking sau; ưu tiên lệnh Đăng nhập/Cấu hình/Thoát và vẫn dừng khi cần OTP hoặc lỗi phiên chung. Bổ sung dữ liệu vào bảng/popup/Excel đã có, không phát chuông hay thông báo trùng. Giữ kiểm tra đúng mã/chỗ nghỉ/ngày đến và phân bổ số phòng; không tự đoán dữ liệu hoặc vượt xác thực. Giữ nguyên giờ yên lặng v1.7.24, tài khoản, 5 âm nguồn, 9 cột Excel, phiên trình duyệt, lịch sử và UID. Đã kiểm tra dữ liệu tải chậm bằng trình duyệt Windows trong EXE và OTA trên ba hồ sơ cũ." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:
