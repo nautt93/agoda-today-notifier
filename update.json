@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.24",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.24/Booking-Checkin-Hom-Nay-1.7.24.exe",
-  "sha256": "243280ea74ca96b7f5bd9b0eaffc459db4b34dd790a5040ce0ce9ef161d8000c",
-  "size": 64294713,
-  "notes": "Thêm thời gian yên lặng tùy chọn giờ/phút bắt đầu và kết thúc trong Cài đặt, hỗ trợ cùng ngày và qua đêm. Nút Lưu thời gian áp dụng ngay mà không cần khởi động lại email/trình duyệt; mặc định cũ 00:00–08:00 được giữ. Trong giờ yên lặng vẫn đọc và lưu booking nhưng tạm dừng popup, chuông và cảnh báo F92; popup đang mở được giữ chờ, không xác nhận hay bỏ booking. Hết giờ chỉ báo booking check-in vẫn là hôm nay, không báo lặp hoặc nhắc ngày cũ. Chặn giờ không hợp lệ/hai mốc trùng nhau trước khi lưu; giữ nguyên tài khoản, 5 âm nguồn, 9 cột Excel, popup Booking.com v1.7.23, phiên trình duyệt, lịch sử và UID. Đã kiểm tra thời gian qua đêm/đúng mốc phút, hàng đợi, F92, giao diện Windows, EXE và OTA trên ba hồ sơ cũ.",
-  "signature": "WMeVNUcDaiYZOREK6WB8XWR91mwbtEZfyYI83N/2jPs0v4uIrqeGC69SmbQWIn0iC54Tpt7c+ICc39ea3CzMCg=="
+  "version": "1.7.25",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.25/Booking-Checkin-Hom-Nay-1.7.25.exe",
+  "sha256": "0069846149503d99cd1d817825cb709a3182a21534bd5a6e19e81ccc30cd7478",
+  "size": 64295238,
+  "notes": "Sửa lấy chi tiết Booking.com: chờ phòng, ngày trả và tổng tiền tải đầy đủ trên cùng trang, không chỉ chờ tên rồi đọc quá sớm. Booking lỗi dữ liệu được thử lại riêng, không chặn các booking sau; ưu tiên lệnh Đăng nhập/Cấu hình/Thoát và vẫn dừng khi cần OTP hoặc lỗi phiên chung. Bổ sung dữ liệu vào bảng/popup/Excel đã có, không phát chuông hay thông báo trùng. Giữ kiểm tra đúng mã/chỗ nghỉ/ngày đến và phân bổ số phòng; không tự đoán dữ liệu hoặc vượt xác thực. Giữ nguyên giờ yên lặng v1.7.24, tài khoản, 5 âm nguồn, 9 cột Excel, phiên trình duyệt, lịch sử và UID. Đã kiểm tra dữ liệu tải chậm bằng trình duyệt Windows trong EXE và OTA trên ba hồ sơ cũ.",
+  "signature": "IBHXK++yExCtFCUiaTvLFHYeuxlZqZMj/8iEw580W7rD30Mr19l+DJmkxc1ma0uNdZUMsGdh7I1dkbPMyr8cBA=="
 }
