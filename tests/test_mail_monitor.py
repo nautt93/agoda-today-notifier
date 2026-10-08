@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import queue
 import ssl
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from pathlib import Path
@@ -706,10 +706,45 @@ def test_future_and_modified_cancelled_messages_never_create_reminders(tmp_path,
 def test_quiet_hours_persist_then_release_pending_without_duplicate(tmp_path, monkeypatch):
     monitor, state, events = make_monitor(tmp_path, quiet_hours_enabled=True)
     fake_inbox(monkeypatch, {1: recent_message()})
-    monkeypatch.setattr(mail_monitor, "is_quiet_hours", lambda: True)
+    monkeypatch.setattr(mail_monitor, "quiet_hours_active", lambda _config: True)
     monitor.scan_mailbox()
     assert [kind for kind, _ in events.queue if kind == "alert"] == []
     assert len([kind for kind, _ in events.queue if kind == "deferred_alert"]) == 1
     assert len(state.pending_for_date(date.today())) == 1
     monitor.scan_mailbox()
     assert len(state.pending_for_date(date.today())) == 1
+
+
+@pytest.mark.parametrize("start,end,hour,minute,quiet", [
+    ("22:30", "06:15", 22, 29, False), ("22:30", "06:15", 22, 30, True),
+    ("22:30", "06:15", 6, 14, True), ("22:30", "06:15", 6, 15, False),
+    ("10:05", "12:30", 10, 5, True), ("10:05", "12:30", 12, 30, False),
+])
+def test_monitor_custom_quiet_hours_persist_booking_and_route_notification(tmp_path, monkeypatch, start, end, hour, minute, quiet):
+    from booking_notifier.quiet_hours import quiet_hours_active
+
+    monitor, state, events = make_monitor(tmp_path, quiet_hours_enabled=True, quiet_start_time=start, quiet_end_time=end)
+    fake_inbox(monkeypatch, {1: recent_message()})
+    when = datetime.combine(date.today(), time(hour, minute))
+    monkeypatch.setattr(mail_monitor, "quiet_hours_active", lambda config: quiet_hours_active(config, when))
+    monitor.scan_mailbox()
+    notifications = [kind for kind, _ in events.queue if kind in {"alert", "deferred_alert"}]
+    assert notifications == ["deferred_alert" if quiet else "alert"]
+    assert len(state.pending_for_date(date.today())) == 1
+    monitor.scan_mailbox()
+    assert len([kind for kind, _ in events.queue if kind in {"alert", "deferred_alert"}]) == 1
+
+
+def test_changing_quiet_hours_updates_one_snapshot_without_restarting_email(tmp_path):
+    monitor, _, _ = make_monitor(tmp_path, quiet_hours_enabled=True)
+    previous = dict(monitor.config)
+    snapshot = monitor.config
+    identity = monitor.identity_hash
+    monitor.configure_quiet_hours({"quiet_hours_enabled": False, "quiet_start_time": "22:30", "quiet_end_time": "06:15"})
+    assert snapshot == previous and monitor.config is not snapshot
+    assert monitor.config == {**previous, "quiet_hours_enabled": False, "quiet_start_time": "22:30", "quiet_end_time": "06:15"}
+    assert monitor.identity_hash == identity and not monitor.stop_event.is_set()
+    saved = monitor.config
+    with pytest.raises(ValueError):
+        monitor.configure_quiet_hours({"quiet_start_time": "06:15", "quiet_end_time": "06:15"})
+    assert monitor.config is saved

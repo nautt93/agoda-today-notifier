@@ -6,8 +6,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .quiet_hours import normalize_quiet_times
+
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.23"
+APP_VERSION = "1.7.24"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -45,6 +47,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "f92_sound_index": 4,
     "f92_builtin_sound_enabled": False,
     "quiet_hours_enabled": True,
+    "quiet_start_time": "00:00",
+    "quiet_end_time": "08:00",
     "start_with_windows": True,
     "start_minimized": False,
     "update_manifest_source": PUBLIC_UPDATE_MANIFEST_URL,
@@ -86,11 +90,25 @@ class ConfigStore:
             config["update_manifest_source"] = PUBLIC_UPDATE_MANIFEST_URL
         config["poll_seconds"] = min(3600, max(30, int(config.get("poll_seconds", 60))))
         config["scan_days"] = min(365, max(1, int(config.get("scan_days", 90))))
+        try:
+            config["quiet_start_time"], config["quiet_end_time"] = normalize_quiet_times(
+                config["quiet_start_time"], config["quiet_end_time"],
+            )
+        except ValueError:
+            # Repair the pair together; never combine one bad legacy endpoint
+            # with the other and accidentally suppress an entire workday.
+            config["quiet_start_time"] = DEFAULT_CONFIG["quiet_start_time"]
+            config["quiet_end_time"] = DEFAULT_CONFIG["quiet_end_time"]
         return config
 
     def save(self, config: dict[str, Any]) -> None:
         value = dict(DEFAULT_CONFIG)
         value.update({key: item for key, item in config.items() if key in DEFAULT_CONFIG})
+        # Validate before creating/replacing any file, even when quiet hours
+        # are disabled, so an invalid draft cannot overwrite working settings.
+        value["quiet_start_time"], value["quiet_end_time"] = normalize_quiet_times(
+            value["quiet_start_time"], value["quiet_end_time"],
+        )
         atomic_json_write(self.path, value)
 
     def install_source_sound_pack(self, directory: Path) -> dict[str, Any]:

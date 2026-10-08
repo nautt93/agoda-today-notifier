@@ -15,6 +15,7 @@ from typing import Any
 
 from .models import BOOKING_STATUS_NEW
 from .parsing import is_traveloka_payment_notice, is_trusted_booking_sender, parse_booking_message
+from .quiet_hours import normalize_quiet_times, quiet_hours_active
 from .state import PARSER_STATE_VERSION, StateStore
 
 LOGGER = logging.getLogger(__name__)
@@ -24,8 +25,9 @@ DETAIL_REPAIR_MESSAGE_LIMIT = 3
 
 
 def is_quiet_hours(when: datetime | None = None, start_hour: int = 0, end_hour: int = 8) -> bool:
-    current = when or datetime.now()
-    return start_hour <= current.hour < end_hour
+    """Compatibility API for callers that supplied whole-hour boundaries."""
+    return quiet_hours_active({"quiet_hours_enabled": True, "quiet_start_time": f"{start_hour:02d}:00",
+                               "quiet_end_time": f"{end_hour:02d}:00"}, when)
 
 
 def mailbox_uid_key(identity_hash: str, uid_validity: str, uid: str) -> str:
@@ -79,6 +81,13 @@ class ImapMonitor(threading.Thread):
     def check_now(self) -> None:
         self.repair_requested.set()
         self.wake_event.set()
+
+    def configure_quiet_hours(self, config: dict[str, Any]) -> None:
+        """Replace a complete quiet-hours snapshot without restarting IMAP."""
+        start, end = normalize_quiet_times(config.get("quiet_start_time", "00:00"),
+                                           config.get("quiet_end_time", "08:00"))
+        self.config = {**self.config, "quiet_hours_enabled": bool(config.get("quiet_hours_enabled", True)),
+                       "quiet_start_time": start, "quiet_end_time": end}
 
     def emit(self, event_type: str, payload: Any) -> None:
         self.event_queue.put((event_type, payload))
@@ -257,7 +266,7 @@ class ImapMonitor(threading.Thread):
                     continue
                 today_count += 1
                 self.emit("log", f"BÁO NGAY {alert.source} {alert.booking_id or '(không có mã)'}: check-in {today.isoformat()}.")
-                if self.config.get("quiet_hours_enabled", True) and is_quiet_hours():
+                if quiet_hours_active(self.config):
                     self.emit("deferred_alert", alert)
                 else:
                     self.emit("alert", alert)

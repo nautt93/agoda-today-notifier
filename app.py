@@ -33,7 +33,7 @@ from booking_notifier.config import (
 from booking_notifier.excel_export import excel_tsv, excel_tsv_rows  # noqa: F401 (public compatibility)
 from booking_notifier.expedia_print import ExpediaPrintError, fetch_expedia_print, render_booking_a4, render_expedia_a4
 from booking_notifier.f92_device import F92Worker
-from booking_notifier.mail_monitor import ImapMonitor, is_quiet_hours, test_imap_connection
+from booking_notifier.mail_monitor import ImapMonitor, test_imap_connection
 from booking_notifier.models import BOOKING_SOURCES, BookingEvent
 from booking_notifier.ota_update import (
     check_for_update,
@@ -43,6 +43,7 @@ from booking_notifier.ota_update import (
     run_update_helper_from_argv,
 )
 from booking_notifier.popup_state import booking_com_details_ready, booking_com_popup_state
+from booking_notifier.quiet_hours import normalize_quiet_times, quiet_hours_active
 from booking_notifier.security import protect_secret, unprotect_secret
 from booking_notifier.state import StateStore
 from booking_notifier.system_tray import SystemTray
@@ -491,6 +492,11 @@ class BookingNotifierApp:
         self.sound_var = tk.StringVar()
         self.source_sound_vars = {source: tk.StringVar() for source in BOOKING_SOURCES}
         self.quiet_var = tk.BooleanVar()
+        self.quiet_start_hour_var = tk.StringVar()
+        self.quiet_start_minute_var = tk.StringVar()
+        self.quiet_end_hour_var = tk.StringVar()
+        self.quiet_end_minute_var = tk.StringVar()
+        self.quiet_feedback_var = tk.StringVar()
         self.start_windows_var = tk.BooleanVar()
         self.start_minimized_var = tk.BooleanVar()
         self.f92_enabled_var = tk.BooleanVar()
@@ -529,7 +535,6 @@ class BookingNotifierApp:
         preferences.columnconfigure(0, weight=1)
         preferences.columnconfigure(1, weight=1)
         checks = (
-            ("Giờ yên lặng 00:00–08:00", self.quiet_var),
             ("Khởi động cùng Windows", self.start_windows_var),
             ("Ẩn xuống khay khi khởi động", self.start_minimized_var),
         )
@@ -537,6 +542,36 @@ class BookingNotifierApp:
             ttk.Checkbutton(
                 preferences, text=text, variable=variable, style="Card.TCheckbutton",
             ).grid(row=index // 2, column=index % 2, sticky="w", padx=6, pady=5)
+
+        quiet = ttk.LabelFrame(content, text="  Thời gian yên lặng  ", style="Section.TLabelframe", padding=(18, 14))
+        quiet.pack(fill="x", pady=(0, 12))
+        self.quiet_checkbox = ttk.Checkbutton(
+            quiet, name="quiet_hours_enabled", text="Bật thời gian yên lặng", variable=self.quiet_var,
+            command=self._update_quiet_time_controls, style="Card.TCheckbutton",
+        )
+        self.quiet_checkbox.pack(anchor="w")
+        times = ttk.Frame(quiet, style="Card.TFrame")
+        times.pack(fill="x", pady=(10, 8))
+        self.quiet_time_controls: list[ttk.Combobox] = []
+        for label, prefix, hour_var, minute_var in (
+            ("Từ", "quiet_start", self.quiet_start_hour_var, self.quiet_start_minute_var),
+            ("Đến", "quiet_end", self.quiet_end_hour_var, self.quiet_end_minute_var),
+        ):
+            ttk.Label(times, text=label, style="Card.TLabel").pack(side="left", padx=(0 if prefix == "quiet_start" else 20, 8))
+            for suffix, variable, maximum in (("hour", hour_var, 24), ("minute", minute_var, 60)):
+                if suffix == "minute":
+                    ttk.Label(times, text=":", style="Card.TLabel").pack(side="left", padx=4)
+                control = ttk.Combobox(times, name=f"{prefix}_{suffix}", textvariable=variable,
+                                       values=tuple(f"{number:02d}" for number in range(maximum)),
+                                       state="readonly", width=4)
+                control.pack(side="left")
+                self.quiet_time_controls.append(control)
+        ttk.Button(times, name="save_quiet_hours", text="Lưu thời gian", command=self.save_quiet_hours,
+                   style="Secondary.TButton").pack(side="left", padx=(20, 0))
+        ttk.Label(quiet, text="Giờ trên máy này • Có thể chọn qua đêm, ví dụ 22:30–06:15.\n"
+                  "App vẫn đọc email; tạm dừng popup và chuông. Hết giờ chỉ báo booking check-in hôm nay.",
+                  style="CardMuted.TLabel", wraplength=680).pack(anchor="w")
+        ttk.Label(quiet, textvariable=self.quiet_feedback_var, style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(6, 0))
 
         booking = ttk.LabelFrame(content, text="  Booking.com • Chi tiết đầy đủ  ", style="Section.TLabelframe", padding=(18, 14))
         booking.pack(fill="x", pady=(0, 12))
@@ -672,6 +707,13 @@ class BookingNotifierApp:
         self.booking_com_enabled_var.set(bool(c.get("booking_com_enrichment", True)))
         self.booking_com_browser_var.set(str(c.get("booking_com_browser", "auto")))
         self.quiet_var.set(bool(c["quiet_hours_enabled"]))
+        start, end = normalize_quiet_times(c.get("quiet_start_time", "00:00"), c.get("quiet_end_time", "08:00"))
+        self.quiet_start_hour_var.set(start[:2])
+        self.quiet_start_minute_var.set(start[3:])
+        self.quiet_end_hour_var.set(end[:2])
+        self.quiet_end_minute_var.set(end[3:])
+        self._update_quiet_time_controls()
+        self.quiet_feedback_var.set("Thay đổi có hiệu lực sau khi bấm Lưu thời gian hoặc Lưu & khởi động.")
         self.start_windows_var.set(bool(c["start_with_windows"]))
         self.start_minimized_var.set(bool(c["start_minimized"]))
         self.f92_enabled_var.set(bool(c["f92_enabled"]))
@@ -697,7 +739,7 @@ class BookingNotifierApp:
             **{SOURCE_SOUND_KEYS[source.lower()]: variable.get().strip() for source, variable in self.source_sound_vars.items()},
             "booking_com_enrichment": self.booking_com_enabled_var.get(),
             "booking_com_browser": self.booking_com_browser_var.get(),
-            "quiet_hours_enabled": self.quiet_var.get(),
+            **self._collect_quiet_preferences(),
             "start_with_windows": self.start_windows_var.get(),
             "start_minimized": self.start_minimized_var.get(),
             "f92_enabled": self.f92_enabled_var.get(),
@@ -706,6 +748,89 @@ class BookingNotifierApp:
             "f92_builtin_sound_enabled": self.f92_builtin_sound_var.get(),
             "update_manifest_source": self.update_source_var.get().strip(),
         }
+
+    def _update_quiet_time_controls(self) -> None:
+        state = "readonly" if self.quiet_var.get() else "disabled"
+        for control in getattr(self, "quiet_time_controls", ()):
+            control.configure(state=state)
+
+    def _collect_quiet_preferences(self) -> dict[str, Any]:
+        config = getattr(self, "config", {})
+        start_default = str(config.get("quiet_start_time", "00:00"))
+        end_default = str(config.get("quiet_end_time", "08:00"))
+
+        def selected(name: str, fallback: str) -> str:
+            variable = getattr(self, name, None)
+            return str(variable.get()) if variable is not None else fallback
+
+        start, end = normalize_quiet_times(
+            f"{selected('quiet_start_hour_var', start_default[:2])}:{selected('quiet_start_minute_var', start_default[3:])}",
+            f"{selected('quiet_end_hour_var', end_default[:2])}:{selected('quiet_end_minute_var', end_default[3:])}",
+        )
+        return {"quiet_hours_enabled": bool(self.quiet_var.get()), "quiet_start_time": start, "quiet_end_time": end}
+
+    def save_quiet_hours(self) -> None:
+        """Apply only these settings, keeping email and browser connections alive."""
+        try:
+            updated = {**self.config, **self._collect_quiet_preferences()}
+            self.config_store.save(updated)
+            self.config = updated
+            monitor = getattr(self, "monitor", None)
+            if monitor is not None:
+                monitor.configure_quiet_hours(updated)
+            self._release_pending_alerts()
+            description = (f"Đã lưu giờ yên lặng {updated['quiet_start_time']}–{updated['quiet_end_time']}."
+                           if updated["quiet_hours_enabled"] else "Đã tắt thời gian yên lặng.")
+            self.quiet_feedback_var.set(description)
+            self.log(description)
+        except Exception as exc:
+            messagebox.showerror("Không lưu được thời gian yên lặng", str(exc),
+                                 parent=getattr(self, "settings_window", None) or self.root)
+
+    def _quiet_hours_active(self) -> bool:
+        # Use saved settings, never unsaved checkbox/time-picker drafts.
+        config = getattr(self, "config", {})
+        if "quiet_hours_enabled" not in config:
+            variable = getattr(self, "quiet_var", None)
+            config = {**config, "quiet_hours_enabled": bool(variable.get()) if variable is not None else False}
+        return quiet_hours_active(config)
+
+    def _clear_popup_references(self) -> None:
+        for name in ("active_guest_var", "active_room_var", "active_revenue_var", "active_checkout_var",
+                     "active_nights_var", "active_booking_details_var", "active_booking_title_var",
+                     "active_booking_status_label", "active_copy_button", "active_mute_button",
+                     "active_guest_label", "active_hero", "active_menu"):
+            setattr(self, name, None)
+        self.active_sound_muted = False
+
+    def _enforce_quiet_hours(self) -> bool:
+        quiet = self._quiet_hours_active()
+        worker = getattr(self, "f92_worker", None)
+        if worker is not None and hasattr(worker, "set_notifications_suspended"):
+            worker.set_notifications_suspended(quiet)
+        if not quiet:
+            return False
+        active = getattr(self, "active_alert", None)
+        queued = getattr(self, "alert_queue", [])
+        if active is not None or queued or getattr(self, "sound_active", False):
+            self.stop_sound()
+            popup = getattr(self, "active_popup", None)
+            if popup is not None:
+                popup.destroy()
+            self.active_popup = None
+            self.active_alert = None
+            self.alert_queue.clear()
+            self.queued_ids.clear()
+            self._clear_popup_references()
+            # Never acknowledge: the same persisted booking resumes afterwards.
+            self.f92_worker.idle()
+        return True
+
+    def _release_pending_alerts(self) -> None:
+        if self._enforce_quiet_hours():
+            return
+        for alert in self.state.pending_for_date(date.today()):
+            self.enqueue_alert(alert)
 
     def _has_complete_config(self) -> bool:
         return bool(self.host_var.get().strip() and self.email_var.get().strip() and self.password_var.get())
@@ -745,14 +870,16 @@ class BookingNotifierApp:
 
     def save_and_start(self) -> None:
         try:
-            self.config = self._collect_config()
+            updated = self._collect_config()
             if not self._has_complete_config():
                 raise ValueError("Hãy nhập đầy đủ máy chủ, email và mật khẩu ứng dụng.")
-            self.config_store.save(self.config)
+            self.config_store.save(updated)
+            self.config = updated
             set_start_with_windows(bool(self.config["start_with_windows"]))
             self.f92_worker.configure(self.config)
             self.booking_com_worker.configure(self.config)
             self._refresh_booking_popup_state()
+            self._release_pending_alerts()
             self._restore_f92_display()
             self.start_monitoring()
             self.log("Đã lưu cấu hình an toàn và khởi động theo dõi.")
@@ -783,6 +910,11 @@ class BookingNotifierApp:
     def _start_monitor_generation(self, generation: int, config: dict[str, Any], password: str) -> None:
         if generation != self.monitor_generation:
             return
+        # A quiet-only save may happen while the previous IMAP worker stops.
+        # Use the latest saved interval, not the earlier restart snapshot.
+        saved = getattr(self, "config", config)
+        config = {**config, **{key: saved[key] for key in ("quiet_hours_enabled", "quiet_start_time", "quiet_end_time")
+                              if key in saved}}
         self.monitor = ImapMonitor(config, password, self.state, self.events)
         self.monitor.start()
 
@@ -902,7 +1034,7 @@ class BookingNotifierApp:
                 elif event_type == "alert":
                     self.enqueue_alert(payload)
                 elif event_type == "deferred_alert":
-                    self.log(f"Đã ghi nhận booking {payload.booking_id}; sẽ báo sau 08:00.")
+                    self.log(f"Đã ghi nhận booking {payload.booking_id}; sẽ báo khi hết giờ yên lặng nếu check-in vẫn là hôm nay.")
                 elif event_type in {"booking_cancelled", "booking_modified"}:
                     self._handle_booking_lifecycle(payload)
                 elif event_type == "history_changed":
@@ -987,13 +1119,14 @@ class BookingNotifierApp:
         try:
             if self.history_day != date.today():
                 self.refresh_history()
-            if not (self.quiet_var.get() and is_quiet_hours()):
-                for alert in self.state.pending_for_date(date.today()):
-                    self.enqueue_alert(alert)
+            self._release_pending_alerts()
         except Exception:
             LOGGER.exception("Cannot show pending alerts; will retry")
         finally:
-            self.root.after(30_000, self._minute_tick)
+            now = datetime.now()
+            # Check at every minute boundary, including the configured start/end.
+            until_minute = (60 - now.second) * 1000 - now.microsecond // 1000
+            self.root.after(max(100, min(30_000, until_minute)), self._minute_tick)
 
     def _restore_f92_display(self) -> None:
         if self.active_alert:
@@ -1031,8 +1164,8 @@ class BookingNotifierApp:
         # worker emits its alert. Closing that popup must also block the late event.
         if self.state.is_acknowledged(alert):
             return
-        if self.quiet_var.get() and is_quiet_hours():
-            return  # Already persisted pending; the minute tick releases it after 08:00.
+        if self._enforce_quiet_hours():
+            return  # Persisted pending; release at the configured quiet-hours end.
         if alert.storage_id in self.queued_ids:
             return
         self.queued_ids.add(alert.storage_id)
@@ -1094,6 +1227,8 @@ class BookingNotifierApp:
         popup.after(250, reinforce_focus)
 
     def _show_next_alert(self) -> None:
+        if self._enforce_quiet_hours():
+            return
         if self.active_alert:
             return
         while self.alert_queue:
@@ -1546,19 +1681,7 @@ class BookingNotifierApp:
         if self.active_popup:
             self.active_popup.destroy()
             self.active_popup = None
-        self.active_guest_var = None
-        self.active_room_var = None
-        self.active_revenue_var = None
-        self.active_checkout_var = None
-        self.active_nights_var = None
-        self.active_booking_details_var = None
-        self.active_booking_title_var = None
-        self.active_booking_status_label = None
-        self.active_copy_button = None
-        self.active_mute_button = None
-        self.active_sound_muted = False
-        self.active_guest_label = None
-        self.active_hero = None
+        self._clear_popup_references()
         self.refresh_history()
         self._show_next_alert()
 

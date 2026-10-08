@@ -29,7 +29,7 @@
 - Khi in, đọc email gốc theo đúng mã booking từ Inbox bằng tìm trên máy chủ: Expedia tải tối đa 3 thư khớp; Traveloka tải tối đa 6 thư khớp để ghép xác nhận và thanh toán. Kiểm tra nguồn/ngày đến/mã trước khi tạo phiếu, không ghép thẻ của booking khác hoặc đoán phân bổ khi thư có nhiều reservation chưa rõ. Không ảnh hưởng mốc quét thư, không đánh dấu đã đọc, không tạo booking/popup mới. Cần cấu hình IMAP đã lưu và email gốc còn trong Inbox.
 - Parser p12 tách thư thanh toán Traveloka khỏi cảnh báo booking và đánh dấu đã xử lý để không tải lại vô hạn. Các trường thẻ là ranh giới tên khách/hạng phòng, không bị nối vào dữ liệu booking. Khi nâng cấp chỉ đọc lại tối đa 20 thư gần nhất một lần, giữ mốc UID và dấu đã đóng; không mở lại popup cũ.
 - Thông tin thẻ/phiếu in chỉ xử lý trong bộ nhớ, không ghi vào lịch sử, log, clipboard Excel hoặc tệp tạm của ứng dụng. Email thật không đưa lên GitHub. **Phiếu có thẻ là tài liệu nội bộ, không giao khách; bảo quản/hủy giấy an toàn. Máy in/hàng đợi in hoặc máy in PDF có thể lưu bản in; người dùng cần bảo vệ/xóa dữ liệu đó.**
-- Phát MP3 hoặc WAV như bản cũ; tệp âm thanh/thiết bị lỗi không đóng popup booking. Giờ yên lặng 00:00–08:00 giữ cảnh báo chờ và hiện sau 08:00 nếu bật.
+- Phát MP3 hoặc WAV như bản cũ; tệp âm thanh/thiết bị lỗi không đóng popup booking. Từ v1.7.24 có giờ yên lặng tùy chọn giờ/phút bắt đầu và kết thúc (mặc định cũ 00:00–08:00), hỗ trợ qua đêm như 22:30–06:15.
 - Âm thanh riêng theo nguồn: **Cài đặt → Cấu hình → Âm thanh theo nguồn booking**, chọn MP3/WAV cho Agoda, Expedia, Traveloka và Trip, nghe thử từng nguồn rồi **Lưu & khởi động**. Âm báo dùng file của nguồn booking đang hiện popup, lặp đến khi đóng thông báo; không lấy nhầm file của nguồn khác khi các booking nối tiếp nhau. Nhấn Sao chép không dừng âm báo, ẩn khay không ảnh hưởng phát âm thanh.
 - v1.7.17 tích hợp nguyên bản ba file được cung cấp: **Agoda → 1-agoda.mp3**, **Expedia → 2-expedia.mp3**, **Traveloka → 3-traveloka.mp3**. MP3 đi kèm EXE; tự chép/kiểm tra SHA-256 ở `%APPDATA%\AgodaTodayNotifier\sounds`, không phụ thuộc thư mục Downloads hoặc thư mục tạm giải nén EXE. Lần đầu cập nhật này tự đổi ba lựa chọn nguồn sang đúng bộ MP3, giữ email/mật khẩu/cấu hình khác và đường dẫn âm chung cũ; lưu dấu `source_sound_pack` để những lựa chọn riêng sau đó không bị ghi đè khi khởi động/cập nhật.
 - v1.7.19 thêm **Trip → 4-trip.mp3**, giữ nguyên nội dung file MP3 người dùng cung cấp và bản PCM của chính âm thanh đó. Dấu nâng cấp riêng `trip_sound_pack` chỉ bổ sung mặc định cho Trip, không đặt lại âm Agoda/Expedia/Traveloka, âm chung hoặc thông tin đăng nhập đã lưu. Lựa chọn âm Trip riêng cũng được giữ qua khởi động/cập nhật.
@@ -50,6 +50,15 @@
 - Mật khẩu ứng dụng được mã hóa bằng Windows DPAPI.
 
 ## Cài đặt
+
+### Thời gian yên lặng — từ v1.7.24
+
+Vào **Cài đặt → Cấu hình → Thời gian yên lặng**, bật **Bật thời gian yên lặng**, chọn giờ/phút **Từ** và **Đến**, rồi bấm **Lưu thời gian**. Nút này chỉ lưu lịch yên lặng, không yêu cầu nhập lại tài khoản, không khởi động lại kết nối email hoặc trình duyệt. **Lưu & khởi động** cũng lưu cùng khung giờ. Thay đổi chưa lưu không ảnh hưởng thông báo đang chạy; bỏ chọn rồi lưu để tắt lịch yên lặng.
+
+- Dùng giờ địa phương trên máy. Bao gồm phút bắt đầu, không bao gồm phút kết thúc; hỗ trợ cùng ngày (10:05–12:30) và qua đêm (22:30–06:15). Hai mốc phải khác nhau; không hiểu hai mốc trùng nhau là tắt 24 giờ.
+- Áp dụng cho cả 5 nguồn. App vẫn quét thư và lưu booking, nhưng không mở popup/phát chuông hoặc gửi cảnh báo booking F92 trong khung giờ đó. Popup đang mở được tạm đóng và dừng chuông khi tới giờ bắt đầu hoặc lưu một khung giờ đang có hiệu lực; không xác nhận/không bỏ booking chờ. F92 trở về lịch, các lệnh kiểm tra thiết bị do người dùng bấm vẫn hoạt động. Không thể thu hồi âm một lần đã gửi xuống phần cứng trước đó.
+- Hết giờ, chỉ báo các booking chờ có check-in **vẫn là hôm nay**, một lần qua hàng đợi cũ; không nhắc lại booking ngày hôm qua sau nửa đêm và không báo trước cho ngày khác. Booking đã đóng/xác nhận không được phát lại. Thoát/khởi động lại/OTA vẫn giữ cặp giờ và booking chờ.
+- Cấu hình từ bản cũ giữ trạng thái bật/tắt và mặc định 00:00–08:00. Cặp giờ lưu không hợp lệ được khôi phục về cặp mặc định; lưu giờ không hợp lệ bị chặn trước khi ghi file, giữ nguyên tài khoản/âm thanh/các cài đặt khác.
 
 ### Booking.com — hai mức từ v1.7.20
 

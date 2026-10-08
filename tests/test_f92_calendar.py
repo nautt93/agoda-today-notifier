@@ -53,6 +53,6 @@ def test_clock_refresh_does_not_overwrite_booking():
 
 
 def test_empty_alert_queue_restores_calendar():
-    app = SimpleNamespace(active_alert=None, alert_queue=[], f92_worker=Mock())
+    app = SimpleNamespace(active_alert=None, alert_queue=[], f92_worker=Mock(), _enforce_quiet_hours=lambda: False)
     BookingNotifierApp._show_next_alert(app)
     app.f92_worker.idle.assert_called_once()

@@ -200,12 +200,32 @@ class F92Worker(threading.Thread):
         self.stop_event = threading.Event()
         self.client = F92Client(self.settings, self.stop_event)
         self.idle_pending = threading.Event()
+        self.notifications_suspended = threading.Event()
+        self._notification_lock = threading.Lock()
+        self._notification_generation = 0
 
     def configure(self, settings: F92Settings | Mapping[str, Any]) -> None:
         self.operations.put(("configure", settings))
 
     def notify(self, alert: object | Mapping[str, Any], play_sound: bool = True) -> None:
-        self.operations.put(("notify", (alert, play_sound)))
+        with self._notification_lock:
+            if self.notifications_suspended.is_set():
+                return
+            self.operations.put(("notify", (alert, play_sound, self._notification_generation)))
+
+    def set_notifications_suspended(self, suspended: bool) -> None:
+        """Gate future notifications; already emitted one-shot sounds cannot be revoked."""
+        with self._notification_lock:
+            if suspended:
+                entering_quiet = not self.notifications_suspended.is_set()
+                self.notifications_suspended.set()
+                if entering_quiet:
+                    # Permanently retire every older queued notification, even
+                    # if quiet hours end before this worker reaches the queue.
+                    self._notification_generation += 1
+                    self.idle()
+            else:
+                self.notifications_suspended.clear()
 
     def test(self) -> None:
         self.operations.put(("test", None))
@@ -236,7 +256,14 @@ class F92Worker(threading.Thread):
                     if operation == "test":
                         self.event_queue.put(("f92_test_result", (False, "F92 đang tắt trong cấu hình.")))
                 elif operation == "notify":
-                    alert, play_sound = payload
+                    # A notification queued before a quiet-hours boundary must
+                    # never replay after suspension ends. Validate atomically
+                    # with enqueue/transition, but do not hold the UI setter's
+                    # lock during potentially slow, already-dispatched serial I/O.
+                    alert, play_sound, generation = payload
+                    with self._notification_lock:
+                        if self.notifications_suspended.is_set() or generation != self._notification_generation:
+                            continue
                     mode = self.client.notify(alert, play_sound=play_sound)
                     self.event_queue.put(("f92_status", f"F92: đã báo booking bằng {mode}."))
                 elif operation == "test":
