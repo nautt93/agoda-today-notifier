@@ -7,6 +7,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -21,6 +22,7 @@ from booking_notifier.audio import (
     configured_sound_paths,
     default_source_sound,
 )
+from booking_notifier.booking_com import canonical_details_url
 from booking_notifier.booking_com_browser import BookingComWorker
 from booking_notifier.config import (
     APP_DIR,
@@ -164,6 +166,7 @@ class BookingNotifierApp:
         self.active_booking_status_label: tk.Label | None = None
         self.active_copy_button: ttk.Button | None = None
         self.active_mute_button: ttk.Button | None = None
+        self.active_manual_button: ttk.Button | None = None
         self.active_sound_muted = False
         self.booking_com_popup_status = ""
         self.active_guest_label: tk.Label | None = None
@@ -505,6 +508,7 @@ class BookingNotifierApp:
         self.f92_builtin_sound_var = tk.BooleanVar()
         self.update_source_var = tk.StringVar()
         self.booking_com_enabled_var = tk.BooleanVar()
+        self.booking_com_mode_var = tk.StringVar()
         self.booking_com_browser_var = tk.StringVar()
         self.booking_com_status_var = tk.StringVar(value="Email báo ngay. Đăng nhập Extranet riêng trên máy này để tự lấy đầy đủ chi tiết.")
 
@@ -575,16 +579,21 @@ class BookingNotifierApp:
 
         booking = ttk.LabelFrame(content, text="  Booking.com • Chi tiết đầy đủ  ", style="Section.TLabelframe", padding=(18, 14))
         booking.pack(fill="x", pady=(0, 12))
-        ttk.Checkbutton(booking, text="Tự bổ sung họ tên, phòng, ngày trả và tổng tiền từ Extranet",
+        ttk.Checkbutton(booking, text="Bật bổ sung họ tên, phòng, ngày trả và tổng tiền",
                         variable=self.booking_com_enabled_var, style="Card.TCheckbutton").pack(anchor="w")
-        ttk.Label(booking, text="Đăng nhập/OTP trong cửa sổ riêng của app; đăng nhập xong app tự ẩn và giữ phiên chạy nền.\nDùng “Ẩn trình duyệt” để giữ cả tab đăng nhập. Không cần giữ cửa sổ trên màn hình.\nBooking.com vẫn có thể yêu cầu OTP khi phiên hết hạn; email luôn báo booking hôm nay.",
+        ttk.Label(booking, text="Mặc định dùng cách an toàn: không chạy web ẩn và không tự động điều khiển trình duyệt.\nBấm “Mở Booking.com” để mở trang bằng trình duyệt bình thường, sau đó bấm “Nhập/dán chi tiết” và điền thông tin hiển thị trên Extranet. Email vẫn báo booking hôm nay ngay cả khi chưa bổ sung chi tiết.",
                   style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(8, 10))
         row = ttk.Frame(booking, style="Card.TFrame")
         row.pack(fill="x")
-        ttk.Combobox(row, textvariable=self.booking_com_browser_var, values=("auto", "msedge", "chrome"), state="readonly", width=10).pack(side="left")
+        ttk.Label(row, text="Cách lấy:", style="Card.TLabel").pack(side="left", padx=(0, 6))
+        ttk.Combobox(row, name="booking_com_mode", textvariable=self.booking_com_mode_var,
+                     values=("Dán thủ công (khuyên dùng)", "Trình duyệt tự động (thử nghiệm)"),
+                     state="readonly", width=28).pack(side="left")
+        ttk.Combobox(row, name="booking_com_browser", textvariable=self.booking_com_browser_var,
+                     values=("auto", "msedge", "chrome"), state="readonly", width=10).pack(side="left", padx=(8, 0))
         ttk.Button(row, name="booking_com_login", text="Đăng nhập Booking.com", command=self.login_booking_com,
                    style="Secondary.TButton").pack(side="left", padx=8)
-        ttk.Button(row, name="booking_com_background", text="Ẩn trình duyệt", command=self.background_booking_com,
+        ttk.Button(row, name="booking_com_manual", text="Nhập/dán chi tiết", command=self.open_booking_com_manual_dialog,
                    style="Secondary.TButton").pack(side="left", padx=(0, 8))
         ttk.Button(row, text="Lấy lại chi tiết", command=self.refresh_booking_com, style="Secondary.TButton").pack(side="left")
         ttk.Label(booking, textvariable=self.booking_com_status_var, style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(10, 0))
@@ -705,6 +714,8 @@ class BookingNotifierApp:
         for source, variable in self.source_sound_vars.items():
             variable.set(str(c.get(SOURCE_SOUND_KEYS[source.lower()], "")))
         self.booking_com_enabled_var.set(bool(c.get("booking_com_enrichment", True)))
+        self.booking_com_mode_var.set("Dán thủ công (khuyên dùng)" if c.get("booking_com_enrichment_mode", "manual") == "manual"
+                                      else "Trình duyệt tự động (thử nghiệm)")
         self.booking_com_browser_var.set(str(c.get("booking_com_browser", "auto")))
         self.quiet_var.set(bool(c["quiet_hours_enabled"]))
         start, end = normalize_quiet_times(c.get("quiet_start_time", "00:00"), c.get("quiet_end_time", "08:00"))
@@ -738,6 +749,8 @@ class BookingNotifierApp:
             "booking_com_sound_pack": str(self.config.get("booking_com_sound_pack", "")),
             **{SOURCE_SOUND_KEYS[source.lower()]: variable.get().strip() for source, variable in self.source_sound_vars.items()},
             "booking_com_enrichment": self.booking_com_enabled_var.get(),
+            "booking_com_enrichment_mode": ("manual" if getattr(self, "booking_com_mode_var", None) is not None
+                                             and self.booking_com_mode_var.get().startswith("Dán thủ công") else "visible"),
             "booking_com_browser": self.booking_com_browser_var.get(),
             **self._collect_quiet_preferences(),
             "start_with_windows": self.start_windows_var.get(),
@@ -799,7 +812,7 @@ class BookingNotifierApp:
         for name in ("active_guest_var", "active_room_var", "active_revenue_var", "active_checkout_var",
                      "active_nights_var", "active_booking_details_var", "active_booking_title_var",
                      "active_booking_status_label", "active_copy_button", "active_mute_button",
-                     "active_guest_label", "active_hero", "active_menu"):
+                     "active_manual_button", "active_guest_label", "active_hero", "active_menu"):
             setattr(self, name, None)
         self.active_sound_muted = False
 
@@ -928,6 +941,10 @@ class BookingNotifierApp:
     def _save_booking_com_preferences(self) -> None:
         # Login must work even when IMAP settings are not yet filled in.
         self.config["booking_com_enrichment"] = self.booking_com_enabled_var.get()
+        mode_var = getattr(self, "booking_com_mode_var", None)
+        self.config["booking_com_enrichment_mode"] = (
+            "manual" if mode_var is not None and mode_var.get().startswith("Dán thủ công") else "visible"
+        )
         self.config["booking_com_browser"] = self.booking_com_browser_var.get()
         self.config_store.save(self.config)
         self.booking_com_worker.configure(self.config)
@@ -935,15 +952,122 @@ class BookingNotifierApp:
 
     def login_booking_com(self, alert: BookingEvent | None = None) -> None:
         self._save_booking_com_preferences()
+        if self.config.get("booking_com_enrichment_mode", "visible") == "manual":
+            self.open_booking_com_reference(alert)
+            return
         self.booking_com_status_var.set("Đang mở cửa sổ đăng nhập Booking.com…")
         self.booking_com_worker.login(alert)
 
     def refresh_booking_com(self) -> None:
         self._save_booking_com_preferences()
+        if self.config.get("booking_com_enrichment_mode", "visible") == "manual":
+            self.open_booking_com_manual_dialog()
+            return
         self.booking_com_worker.wake(force=True)
 
     def background_booking_com(self) -> None:
+        if self.config.get("booking_com_enrichment_mode", "visible") == "manual":
+            self.booking_com_status_var.set("Đang dùng chế độ thủ công; không có trình duyệt ẩn chạy nền.")
+            return
         self.booking_com_worker.background()
+
+    def _booking_com_manual_target(self, alert: BookingEvent | None = None) -> BookingEvent | None:
+        if alert is not None and alert.source == "Booking.com":
+            return alert
+        active = getattr(self, "active_alert", None)
+        if active is not None and active.source == "Booking.com":
+            return active
+        candidates = self.state.booking_com_candidates(date.today())
+        return next((item for item in candidates if not booking_com_details_ready(item)), None)
+
+    def open_booking_com_reference(self, alert: BookingEvent | None = None) -> None:
+        target = self._booking_com_manual_target(alert)
+        if target is None:
+            self.booking_com_status_var.set("Chưa có booking Booking.com hôm nay đang chờ bổ sung.")
+            return
+        url = canonical_details_url(target.details_url, target.booking_id)
+        if not url:
+            self.booking_com_status_var.set("Email này không có liên kết chi tiết Booking.com hợp lệ.")
+            return
+        try:
+            if not webbrowser.open(url, new=2):
+                raise RuntimeError("Trình duyệt không nhận được yêu cầu mở trang")
+            self.booking_com_status_var.set(
+                f"Đã mở booking {target.booking_id} bằng trình duyệt bình thường. Không có web ẩn chạy nền."
+            )
+        except Exception:
+            self.booking_com_status_var.set("Không mở được trình duyệt; hãy sao chép liên kết booking và mở thủ công.")
+
+    @staticmethod
+    def _manual_checkout(value: str, checkin: date) -> date:
+        text = value.strip()
+        for pattern in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                parsed = datetime.strptime(text, pattern).date()
+                if parsed <= checkin:
+                    raise ValueError("Ngày trả phải sau ngày nhận.")
+                return parsed
+            except ValueError as exc:
+                if "sau ngày nhận" in str(exc):
+                    raise
+        raise ValueError("Ngày trả không hợp lệ; dùng DD/MM/YYYY.")
+
+    def open_booking_com_manual_dialog(self, alert: BookingEvent | None = None) -> None:
+        target = self._booking_com_manual_target(alert)
+        if target is None:
+            messagebox.showinfo("Booking.com", "Không có booking Booking.com hôm nay đang chờ bổ sung.", parent=self.settings_window)
+            return
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Nhập chi tiết Booking.com {target.booking_id}")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        self._fit_desktop_window(dialog, 560, 430)
+        dialog.configure(bg=self.COLORS["surface"])
+        body = ttk.Frame(dialog, style="Card.TFrame", padding=22)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=f"Booking {target.booking_id} • check-in {target.checkin_date:%d/%m/%Y}",
+                  style="SectionTitle.TLabel").pack(anchor="w")
+        ttk.Label(body, text="Mở Extranet bằng trình duyệt bình thường, sao chép thông tin rồi điền vào đây. App không tự điều khiển hoặc chạy web ẩn.",
+                  style="CardMuted.TLabel", wraplength=500).pack(anchor="w", pady=(6, 16))
+        fields: dict[str, tk.StringVar] = {}
+        defaults = {
+            "guest": target.guest_name,
+            "room": target.room_type,
+            "checkout": target.checkout_date.strftime("%d/%m/%Y") if target.checkout_date else "",
+            "total": target.total_revenue,
+        }
+        labels = (("guest", "Họ và tên khách"), ("room", "Hạng phòng + số lượng, ví dụ Superior Room x1"),
+                  ("checkout", "Ngày trả phòng (DD/MM/YYYY)"), ("total", "Tổng tiền phòng"))
+        for key, label in labels:
+            ttk.Label(body, text=label, style="Field.TLabel").pack(anchor="w", pady=(0, 4))
+            fields[key] = tk.StringVar(master=dialog, value=defaults[key] or "")
+            ttk.Entry(body, textvariable=fields[key]).pack(fill="x", pady=(0, 10))
+        feedback = tk.StringVar(master=dialog)
+        ttk.Label(body, textvariable=feedback, style="CardMuted.TLabel", wraplength=500).pack(anchor="w")
+
+        def save_manual() -> None:
+            try:
+                guest, room, total = (fields[key].get().strip() for key in ("guest", "room", "total"))
+                if not guest or not room or not total:
+                    raise ValueError("Hãy điền đủ họ tên, hạng phòng/số lượng và tổng tiền.")
+                checkout = self._manual_checkout(fields["checkout"].get(), target.checkin_date)
+                enriched = target.__class__(**{**target.to_dict(), "status": "new", "guest_name": guest,
+                    "room_type": room, "checkout_date": checkout.isoformat(), "total_revenue": total,
+                    "details_loaded_at": datetime.now().isoformat(timespec="seconds")})
+                if not self.state.enrich_booking_com(enriched, date.today()):
+                    raise ValueError("Booking đã thay đổi hoặc không còn là booking hôm nay.")
+                self.events.put(("history_changed", None))
+                self.booking_com_status_var.set(f"Đã lưu chi tiết thủ công cho Booking.com {target.booking_id}.")
+                dialog.destroy()
+            except Exception as exc:
+                feedback.set(str(exc))
+
+        actions = ttk.Frame(body, style="Card.TFrame")
+        actions.pack(fill="x", pady=(12, 0))
+        ttk.Button(actions, text="Mở Booking.com", command=lambda: self.open_booking_com_reference(target),
+                   style="Secondary.TButton").pack(side="left")
+        ttk.Button(actions, text="Lưu chi tiết", command=save_manual, style="Accent.TButton").pack(side="right")
+        ttk.Button(actions, text="Hủy", command=dialog.destroy, style="Secondary.TButton").pack(side="right", padx=(0, 8))
 
     def test_connection(self) -> None:
         try:
@@ -1248,6 +1372,7 @@ class BookingNotifierApp:
         self.active_booking_title_var = None
         self.active_booking_details_var = None
         self.active_booking_status_label = None
+        self.active_manual_button = None
         popup = tk.Toplevel(self.root)
         self.active_popup = popup
         popup.title(f"{alert.source} • Check-in hôm nay")
@@ -1386,6 +1511,8 @@ class BookingNotifierApp:
                                    highlightbackground=self.COLORS["border"], highlightthickness=1, padx=14, pady=12)
             status_card.pack(fill="x", pady=(0, 10))
             status_card.columnconfigure(0, weight=1)
+            status_card.columnconfigure(1, weight=0)
+            status_card.columnconfigure(2, weight=0)
             self.active_booking_title_var = tk.StringVar(master=popup)
             self.active_booking_details_var = tk.StringVar(master=popup)
             self.active_booking_status_label = tk.Label(
@@ -1396,11 +1523,17 @@ class BookingNotifierApp:
             tk.Label(status_card, textvariable=self.active_booking_details_var, anchor="w", justify="left",
                      wraplength=360, bg=self.COLORS["surface_alt"], fg=self.COLORS["muted"],
                      font=("Segoe UI", 9)).grid(row=1, column=0, sticky="w", pady=(5, 0), padx=(0, 12))
+            self.active_manual_button = ttk.Button(
+                status_card, name="manual_booking_details", text="Nhập chi tiết",
+                command=lambda selected=alert: self.open_booking_com_manual_dialog(selected),
+                style="Secondary.TButton", takefocus=True,
+            )
+            self.active_manual_button.grid(row=0, column=1, rowspan=2, sticky="e", padx=(0, 8), ipady=6)
             self.active_mute_button = ttk.Button(
                 status_card, name="mute_booking_sound", text="Tắt chuông", command=self.mute_active_alert,
                 style="Secondary.TButton", takefocus=True,
             )
-            self.active_mute_button.grid(row=0, column=1, rowspan=2, sticky="e", ipady=6)
+            self.active_mute_button.grid(row=0, column=2, rowspan=2, sticky="e", ipady=6)
         self.copy_feedback_var = tk.StringVar(master=popup, value="Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
         tk.Label(
             footer, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
@@ -1597,8 +1730,11 @@ class BookingNotifierApp:
         alert = getattr(self, "active_alert", None)
         if alert is None or alert.source != "Booking.com":
             return
-        state = booking_com_popup_state(alert, bool(getattr(self, "config", {}).get("booking_com_enrichment", True)),
-                                        getattr(self, "booking_com_popup_status", ""))
+        state = booking_com_popup_state(
+            alert, bool(getattr(self, "config", {}).get("booking_com_enrichment", True)),
+            getattr(self, "booking_com_popup_status", ""),
+            str(getattr(self, "config", {}).get("booking_com_enrichment_mode", "visible")),
+        )
         message = state.message
         if getattr(self, "active_sound_muted", False):
             message = message.replace("Bạn có thể tắt âm trong lúc chờ.", "Chuông đã tắt; popup vẫn chờ thông tin.")

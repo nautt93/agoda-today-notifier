@@ -340,7 +340,9 @@ class BookingComWorker(threading.Thread):
         return self.client
 
     def refresh(self) -> None:
-        if not self.config.get("booking_com_enrichment", True) or self.stopping.is_set():
+        if (not self.config.get("booking_com_enrichment", True)
+                or self.config.get("booking_com_enrichment_mode", "visible") == "manual"
+                or self.stopping.is_set()):
             return
         today = date.today()
         for event in self.state.booking_com_candidates(today)[:20]:
@@ -384,6 +386,7 @@ class BookingComWorker(threading.Thread):
                     break
                 if command == "configure":
                     if (payload.get("booking_com_browser") != self.config.get("booking_com_browser")
+                            or payload.get("booking_com_enrichment_mode", "visible") == "manual"
                             or not payload.get("booking_com_enrichment", True)) and self.client is not None:
                         self.client.close()
                         self.client = None

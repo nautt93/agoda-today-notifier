@@ -30,6 +30,7 @@ def _normalized_status(value: str) -> str:
 
 def booking_com_popup_state(
     alert: BookingEvent | None, enrichment_enabled: bool = True, worker_status: str = "",
+    enrichment_mode: str = "visible",
 ) -> BookingComPopupState:
     """Only classify status; never echo IDs, sessions, OTPs or arbitrary worker text."""
     if booking_com_details_ready(alert):
@@ -41,6 +42,11 @@ def booking_com_popup_state(
         return BookingComPopupState(
             False, "disabled", "Chưa bật lấy chi tiết",
             "Vào Cài đặt và bật tự bổ sung chi tiết Booking.com để lấy đầy đủ thông tin.",
+        )
+    if enrichment_mode == "manual":
+        return BookingComPopupState(
+            False, "manual", "Chưa có đủ chi tiết Booking.com",
+            "Mở Booking.com bằng trình duyệt bình thường, sao chép thông tin rồi bấm “Nhập chi tiết”. Không chạy web ẩn và không tự điều khiển trang.",
         )
     if alert is None or not canonical_details_url(alert.details_url, alert.booking_id):
         return BookingComPopupState(
