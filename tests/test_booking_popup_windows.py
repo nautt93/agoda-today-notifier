@@ -96,7 +96,7 @@ def test_native_booking_pending_mute_in_place_ready_copy_and_next_source(tmp_pat
     store.save({
         "f92_enabled": False, "quiet_hours_enabled": False, "start_with_windows": False,
         "start_minimized": False, "update_manifest_source": "", "email_address": "", "password_encrypted": "",
-        "booking_com_enrichment": True,
+        "booking_com_enrichment": True, "booking_com_enrichment_mode": "visible",
     })
     state = StateStore(tmp_path / "state.json")
     monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
