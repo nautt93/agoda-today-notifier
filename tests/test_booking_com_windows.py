@@ -76,11 +76,11 @@ def test_native_basic_and_enriched_popup_same_window_two_big_actions_no_second_s
 
     from test_ui_smoke import popup_action_buttons, wait_for_tray
 
-        store = ConfigStore(tmp_path / "config.json")
-        store.save({"f92_enabled": False, "quiet_hours_enabled": False, "start_with_windows": False, "update_manifest_source": "",
-                    "booking_com_enrichment": False, "booking_com_enrichment_mode": "visible"})
-        # This regression covers the legacy experimental browser controls;
-        # production defaults to the safe manual mode.
+    store = ConfigStore(tmp_path / "config.json")
+    store.save({"f92_enabled": False, "quiet_hours_enabled": False, "start_with_windows": False, "update_manifest_source": "",
+                "booking_com_enrichment": False, "booking_com_enrichment_mode": "visible"})
+    # This regression covers the legacy experimental browser controls;
+    # production defaults to the safe manual mode.
     state = StateStore(tmp_path / "state.json")
     monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
     monkeypatch.setattr(desktop, "ConfigStore", lambda: store)
