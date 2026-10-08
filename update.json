@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.25",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.25/Booking-Checkin-Hom-Nay-1.7.25.exe",
-  "sha256": "0069846149503d99cd1d817825cb709a3182a21534bd5a6e19e81ccc30cd7478",
-  "size": 64295238,
-  "notes": "Sửa lấy chi tiết Booking.com: chờ phòng, ngày trả và tổng tiền tải đầy đủ trên cùng trang, không chỉ chờ tên rồi đọc quá sớm. Booking lỗi dữ liệu được thử lại riêng, không chặn các booking sau; ưu tiên lệnh Đăng nhập/Cấu hình/Thoát và vẫn dừng khi cần OTP hoặc lỗi phiên chung. Bổ sung dữ liệu vào bảng/popup/Excel đã có, không phát chuông hay thông báo trùng. Giữ kiểm tra đúng mã/chỗ nghỉ/ngày đến và phân bổ số phòng; không tự đoán dữ liệu hoặc vượt xác thực. Giữ nguyên giờ yên lặng v1.7.24, tài khoản, 5 âm nguồn, 9 cột Excel, phiên trình duyệt, lịch sử và UID. Đã kiểm tra dữ liệu tải chậm bằng trình duyệt Windows trong EXE và OTA trên ba hồ sơ cũ.",
-  "signature": "IBHXK++yExCtFCUiaTvLFHYeuxlZqZMj/8iEw580W7rD30Mr19l+DJmkxc1ma0uNdZUMsGdh7I1dkbPMyr8cBA=="
+  "version": "1.7.26",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.26/Booking-Checkin-Hom-Nay-1.7.26.exe",
+  "sha256": "ae8884cfccf48e766a484540ff32f252164f411cc1956640ab5f916573ce3d3f",
+  "size": 64319790,
+  "notes": "Đổi Booking.com sang chế độ an toàn mặc định: không chạy web ẩn và không tự điều khiển Extranet. Email vẫn báo ngay; nút Mở Booking.com dùng trình duyệt bình thường, nút Nhập/dán chi tiết lưu họ tên, phòng + số lượng, ngày trả và tổng tiền do người dùng kiểm tra trên trang. Không lưu cookie/token, không vượt phát hiện máy, không phát chuông hoặc cảnh báo lại khi bổ sung. Chế độ trình duyệt tự động cũ giữ để tương thích nhưng không khuyến nghị. Giữ giờ yên lặng, tài khoản, 5 âm nguồn, 9 cột Excel, lịch sử và UID. Đã kiểm tra manual mode không tạo browser, form ngày trả, popup và ba hồ sơ OTA cũ.",
+  "signature": "qt7Jx6bsEsKrPXeAADXufKfFxJ/Chu6DdCrfUB2X3q8GW6HK5EBqWbQiBx8MDAk9uWTRRU/VJZ3iAmX3bI7HCw=="
 }
