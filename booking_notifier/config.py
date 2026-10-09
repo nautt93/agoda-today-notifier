@@ -9,7 +9,7 @@ from typing import Any
 from .quiet_hours import normalize_quiet_times
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.27"
+APP_VERSION = "1.7.28"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
@@ -40,11 +40,6 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "source_sound_pack": "",
     "trip_sound_pack": "",
     "booking_com_sound_pack": "",
-    "booking_com_enrichment": True,
-    # Manual mode is the safe default: Booking.com is opened in the user's
-    # normal browser and no hidden/automated browser session is started.
-    "booking_com_enrichment_mode": "manual",
-    "booking_com_browser": "auto",
     "f92_enabled": True,
     "f92_port": "AUTO",
     "f92_sound_index": 4,
@@ -56,6 +51,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "start_minimized": False,
     "update_manifest_source": PUBLIC_UPDATE_MANIFEST_URL,
 }
+
+
+def _integer_or_default(value: Any, default: int) -> int:
+    """Read legacy settings without allowing malformed numbers to prevent startup."""
+    try:
+        if isinstance(value, bool) or not isinstance(value, (int, str)):
+            return default
+        return int(value)
+    except (ValueError, TypeError, OverflowError):
+        return default
 
 
 def atomic_json_write(path: Path, value: Any) -> None:
@@ -91,10 +96,10 @@ class ConfigStore:
         source = str(config.get("update_manifest_source", ""))
         if source == "https://raw.githubusercontent.com/xamtro/agoda-today-notifier/main/update.json":
             config["update_manifest_source"] = PUBLIC_UPDATE_MANIFEST_URL
-        config["poll_seconds"] = min(3600, max(30, int(config.get("poll_seconds", 60))))
-        config["scan_days"] = min(365, max(1, int(config.get("scan_days", 90))))
-        mode = str(config.get("booking_com_enrichment_mode", "manual")).strip().lower()
-        config["booking_com_enrichment_mode"] = mode if mode in {"manual", "visible"} else "manual"
+        config["poll_seconds"] = min(3600, max(30, _integer_or_default(config.get("poll_seconds"), 60)))
+        config["scan_days"] = min(365, max(1, _integer_or_default(config.get("scan_days"), 90)))
+        port = _integer_or_default(config.get("imap_port"), DEFAULT_CONFIG["imap_port"])
+        config["imap_port"] = port if 1 <= port <= 65535 else DEFAULT_CONFIG["imap_port"]
         try:
             config["quiet_start_time"], config["quiet_end_time"] = normalize_quiet_times(
                 config["quiet_start_time"], config["quiet_end_time"],
@@ -109,8 +114,6 @@ class ConfigStore:
     def save(self, config: dict[str, Any]) -> None:
         value = dict(DEFAULT_CONFIG)
         value.update({key: item for key, item in config.items() if key in DEFAULT_CONFIG})
-        mode = str(value.get("booking_com_enrichment_mode", "manual")).strip().lower()
-        value["booking_com_enrichment_mode"] = mode if mode in {"manual", "visible"} else "manual"
         # Validate before creating/replacing any file, even when quiet hours
         # are disabled, so an invalid draft cannot overwrite working settings.
         value["quiet_start_time"], value["quiet_end_time"] = normalize_quiet_times(

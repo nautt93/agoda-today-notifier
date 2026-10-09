@@ -95,8 +95,9 @@ def render_booking_image(alert: object | Mapping[str, Any]) -> Image.Image:
     else:
         checkin_text = str(checkin or "-")
     y = _info(draw, y, "MÃ ĐẶT PHÒNG", str(_value(alert, "booking_id") or "-"), max_lines=1)
-    y = _info(draw, y, "KHÁCH LƯU TRÚ", str(_value(alert, "guest_name") or "-"))
-    y = _info(draw, y, "LOẠI PHÒNG", str(_value(alert, "room_type") or "-"))
+    if source.lower() != "booking.com":
+        y = _info(draw, y, "KHÁCH LƯU TRÚ", str(_value(alert, "guest_name") or "-"))
+        y = _info(draw, y, "LOẠI PHÒNG", str(_value(alert, "room_type") or "-"))
     _info(draw, y, "NGÀY NHẬN PHÒNG", checkin_text, max_lines=1)
     draw.rounded_rectangle((18, 432, 302, 466), radius=12, fill="#153C59")
     draw.text((32, 441), "Vui lòng chuẩn bị phòng và đón khách", font=_font(12, True), fill="#9FDCCB")

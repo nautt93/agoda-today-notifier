@@ -51,7 +51,6 @@ def _app(tmp_path):
     app.sound_repeat_job = app.sound_preview_job = None
     app.closing = False
     app.monitor = None
-    app.booking_com_worker = Mock()
     app.f92_worker = Mock()
     app.history_day = date.today()
     app.log = Mock()
@@ -60,14 +59,13 @@ def _app(tmp_path):
     app.play_sound = Mock(side_effect=lambda: setattr(app, "sound_active", True))
     app.stop_sound = Mock(side_effect=lambda: setattr(app, "sound_active", False))
     for name in ("active_guest_var", "active_room_var", "active_revenue_var", "active_checkout_var",
-                 "active_nights_var", "active_booking_title_var", "active_booking_details_var",
-                 "active_booking_status_label", "active_copy_button", "active_mute_button",
+                 "active_nights_var", "active_copy_button",
                  "active_guest_label", "active_hero", "active_menu"):
         setattr(app, name, None)
     fields = {
         "provider_var": "Gmail", "host_var": "imap.gmail.com", "port_var": "993",
         "email_var": "", "password_var": "", "poll_var": "60", "scan_days_var": "90",
-        "sound_var": "", "booking_com_enabled_var": True, "booking_com_browser_var": "auto",
+        "sound_var": "",
         "quiet_var": True, "quiet_start_hour_var": "22", "quiet_start_minute_var": "30",
         "quiet_end_hour_var": "06", "quiet_end_minute_var": "15", "quiet_feedback_var": "",
         "start_windows_var": False, "start_minimized_var": False, "f92_enabled_var": False,
@@ -287,7 +285,6 @@ def test_collect_and_independent_quiet_save_canonical_pair_preserve_other_settin
     assert monitor.configure_quiet_hours.call_args.args[0]["quiet_start_time"] == "22:30"
     monitor.stop.assert_not_called()
     monitor.start.assert_not_called()
-    app.booking_com_worker.configure.assert_not_called()
     app.root.after.assert_not_called()  # Independent quiet save must not duplicate minute timers.
 
 
@@ -337,7 +334,6 @@ def test_native_four_quiet_time_pickers_toggle_independent_save_reload_and_equal
     monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
     monkeypatch.setattr(desktop, "ConfigStore", lambda: store)
     monkeypatch.setattr(desktop, "StateStore", lambda: state)
-    monkeypatch.setattr(desktop.BookingComWorker, "start", lambda _worker: None)
     start_monitoring = Mock()
     monkeypatch.setattr(desktop.BookingNotifierApp, "start_monitoring", start_monitoring)
     monkeypatch.setattr(desktop.BookingNotifierApp, "check_for_updates", Mock())

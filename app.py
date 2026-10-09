@@ -7,8 +7,6 @@ import queue
 import sys
 import threading
 import tkinter as tk
-import webbrowser
-from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -23,8 +21,6 @@ from booking_notifier.audio import (
     configured_sound_paths,
     default_source_sound,
 )
-from booking_notifier.booking_com import ADMIN_HOME, canonical_details_url
-from booking_notifier.booking_com_browser import BookingComWorker
 from booking_notifier.config import (
     APP_DIR,
     APP_NAME,
@@ -34,13 +30,12 @@ from booking_notifier.config import (
     ConfigStore,
 )
 from booking_notifier.excel_export import (  # noqa: F401 (public compatibility)
-    excel_amount_value,
     excel_tsv,
     excel_tsv_rows,
 )
 from booking_notifier.expedia_print import ExpediaPrintError, fetch_expedia_print, render_booking_a4, render_expedia_a4
 from booking_notifier.f92_device import F92Worker
-from booking_notifier.mail_monitor import ImapMonitor, test_imap_connection
+from booking_notifier.mail_monitor import ImapMonitor, friendly_error, test_imap_connection
 from booking_notifier.models import BOOKING_SOURCES, BookingEvent
 from booking_notifier.ota_update import (
     check_for_update,
@@ -49,7 +44,6 @@ from booking_notifier.ota_update import (
     report_update_startup,
     run_update_helper_from_argv,
 )
-from booking_notifier.popup_state import booking_com_details_ready, booking_com_popup_state
 from booking_notifier.quiet_hours import normalize_quiet_times, quiet_hours_active
 from booking_notifier.security import protect_secret, unprotect_secret
 from booking_notifier.state import StateStore
@@ -166,14 +160,7 @@ class BookingNotifierApp:
         self.active_revenue_var: tk.StringVar | None = None
         self.active_checkout_var: tk.StringVar | None = None
         self.active_nights_var: tk.StringVar | None = None
-        self.active_booking_details_var: tk.StringVar | None = None
-        self.active_booking_title_var: tk.StringVar | None = None
-        self.active_booking_status_label: tk.Label | None = None
         self.active_copy_button: ttk.Button | None = None
-        self.active_mute_button: ttk.Button | None = None
-        self.active_manual_button: ttk.Button | None = None
-        self.active_sound_muted = False
-        self.booking_com_popup_status = ""
         self.active_guest_label: tk.Label | None = None
         self.active_hero: tk.Frame | None = None
         self.queued_ids: set[str] = set()
@@ -201,8 +188,6 @@ class BookingNotifierApp:
                 LOGGER.exception("Cannot prepare built-in source sounds; alerts retain fallback audio")
         self.f92_worker = F92Worker(self.events, self.config)
         self.f92_worker.start()
-        self.booking_com_worker = BookingComWorker(self.events, self.state, self.config, APP_DIR / "booking-com-browser")
-        self.booking_com_worker.start()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.bind("<Unmap>", self._on_main_unmap, add="+")
         self.tray.start()
@@ -407,15 +392,8 @@ class BookingNotifierApp:
     def close_settings(self) -> None:
         # Closing settings must not stop monitoring or discard unsaved fields.
         self.stop_sound_preview()
-        manual = getattr(self, "booking_com_manual_window", None)
-        if manual is not None and manual.winfo_exists():
-            manual.transient("")
         self.settings_window.withdraw()
-        if manual is not None and manual.winfo_exists():
-            manual.deiconify()
-            manual.lift()
-            manual.focus_force()
-        elif self.active_popup is not None:
+        if self.active_popup is not None:
             self.active_popup.lift()
             self.active_popup.focus_force()
         else:
@@ -519,11 +497,6 @@ class BookingNotifierApp:
         self.f92_sound_var = tk.StringVar()
         self.f92_builtin_sound_var = tk.BooleanVar()
         self.update_source_var = tk.StringVar()
-        self.booking_com_enabled_var = tk.BooleanVar()
-        self.booking_com_mode_var = tk.StringVar()
-        self.booking_com_browser_var = tk.StringVar()
-        self.booking_com_status_var = tk.StringVar(value="Email báo booking ngay. Chọn cách bổ sung thông tin bên dưới.")
-
         ttk.Label(content, text="Cấu hình vận hành", style="SectionTitle.TLabel").pack(anchor="w")
         ttk.Label(
             content, text="Các thay đổi chỉ có hiệu lực sau khi bấm “Lưu & khởi động”.",
@@ -588,41 +561,6 @@ class BookingNotifierApp:
                   "App vẫn đọc email; tạm dừng popup và chuông. Hết giờ chỉ báo booking check-in hôm nay.",
                   style="CardMuted.TLabel", wraplength=680).pack(anchor="w")
         ttk.Label(quiet, textvariable=self.quiet_feedback_var, style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(6, 0))
-
-        booking = ttk.LabelFrame(content, text="  Booking.com • Chi tiết đầy đủ  ", style="Section.TLabelframe", padding=(18, 14))
-        booking.pack(fill="x", pady=(0, 12))
-        ttk.Checkbutton(booking, text="Bật bổ sung họ tên, phòng, ngày trả và tổng tiền",
-                        variable=self.booking_com_enabled_var, style="Card.TCheckbutton").pack(anchor="w")
-        ttk.Label(booking, text="Mặc định dùng cách an toàn: không chạy web ẩn và không tự động điều khiển trình duyệt.\nBấm “Mở Booking.com” để mở trang bằng trình duyệt bình thường, sau đó bấm “Nhập/dán chi tiết” và điền thông tin hiển thị trên Extranet. Email vẫn báo booking hôm nay ngay cả khi chưa bổ sung chi tiết.",
-                  style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(8, 10))
-        row = ttk.Frame(booking, style="Card.TFrame")
-        row.pack(fill="x")
-        ttk.Label(row, text="Cách lấy:", style="Card.TLabel").pack(side="left", padx=(0, 6))
-        mode = ttk.Combobox(row, name="booking_com_mode", textvariable=self.booking_com_mode_var,
-                            values=("Dán thủ công (khuyên dùng)", "Trình duyệt tự động (thử nghiệm)"),
-                            state="readonly", width=28)
-        mode.pack(side="left")
-        mode.bind("<<ComboboxSelected>>", lambda _event: self._update_booking_com_controls())
-        self.booking_com_browser_control = ttk.Combobox(
-            row, name="booking_com_browser", textvariable=self.booking_com_browser_var,
-            values=("auto", "msedge", "chrome"), state="readonly", width=10,
-        )
-        self.booking_com_browser_control.pack(side="left", padx=(8, 0))
-        actions = ttk.Frame(booking, style="Card.TFrame")
-        actions.pack(fill="x", pady=(10, 0))
-        self.booking_com_login_button = ttk.Button(actions, name="booking_com_login", text="Mở Booking.com", command=self.login_booking_com,
-                                                   style="Secondary.TButton")
-        self.booking_com_login_button.pack(side="left", padx=(0, 8))
-        self.booking_com_background_button = ttk.Button(
-            actions, name="booking_com_background", text="Ẩn trình duyệt", command=self.background_booking_com,
-            style="Secondary.TButton",
-        )
-        self.booking_com_background_button.pack(side="left", padx=(0, 8))
-        ttk.Button(actions, name="booking_com_manual", text="Nhập/dán chi tiết", command=self.open_booking_com_manual_dialog,
-                   style="Secondary.TButton").pack(side="left", padx=(0, 8))
-        ttk.Button(actions, text="Lấy lại chi tiết", command=self.refresh_booking_com,
-                   style="Secondary.TButton").pack(side="left", padx=8)
-        ttk.Label(booking, textvariable=self.booking_com_status_var, style="CardMuted.TLabel", wraplength=680).pack(anchor="w", pady=(10, 0))
 
         sounds = ttk.LabelFrame(content, text="  Âm thanh theo nguồn booking  ", style="Section.TLabelframe", padding=(18, 14))
         sounds.pack(fill="x", pady=(0, 12))
@@ -739,11 +677,6 @@ class BookingNotifierApp:
         self.sound_var.set(str(c["sound_file"]))
         for source, variable in self.source_sound_vars.items():
             variable.set(str(c.get(SOURCE_SOUND_KEYS[source.lower()], "")))
-        self.booking_com_enabled_var.set(bool(c.get("booking_com_enrichment", True)))
-        self.booking_com_mode_var.set("Dán thủ công (khuyên dùng)" if c.get("booking_com_enrichment_mode", "manual") == "manual"
-                                      else "Trình duyệt tự động (thử nghiệm)")
-        self.booking_com_browser_var.set(str(c.get("booking_com_browser", "auto")))
-        self._update_booking_com_controls()
         self.quiet_var.set(bool(c["quiet_hours_enabled"]))
         start, end = normalize_quiet_times(c.get("quiet_start_time", "00:00"), c.get("quiet_end_time", "08:00"))
         self.quiet_start_hour_var.set(start[:2])
@@ -775,10 +708,6 @@ class BookingNotifierApp:
             "trip_sound_pack": str(self.config.get("trip_sound_pack", "")),
             "booking_com_sound_pack": str(self.config.get("booking_com_sound_pack", "")),
             **{SOURCE_SOUND_KEYS[source.lower()]: variable.get().strip() for source, variable in self.source_sound_vars.items()},
-            "booking_com_enrichment": self.booking_com_enabled_var.get(),
-            "booking_com_enrichment_mode": ("manual" if getattr(self, "booking_com_mode_var", None) is not None
-                                             and self.booking_com_mode_var.get().startswith("Dán thủ công") else "visible"),
-            "booking_com_browser": self.booking_com_browser_var.get(),
             **self._collect_quiet_preferences(),
             "start_with_windows": self.start_windows_var.get(),
             "start_minimized": self.start_minimized_var.get(),
@@ -810,7 +739,7 @@ class BookingNotifierApp:
         return {"quiet_hours_enabled": bool(self.quiet_var.get()), "quiet_start_time": start, "quiet_end_time": end}
 
     def save_quiet_hours(self) -> None:
-        """Apply only these settings, keeping email and browser connections alive."""
+        """Apply only these settings, keeping the email connection alive."""
         try:
             updated = {**self.config, **self._collect_quiet_preferences()}
             self.config_store.save(updated)
@@ -836,16 +765,9 @@ class BookingNotifierApp:
         return quiet_hours_active(config)
 
     def _clear_popup_references(self) -> None:
-        dialog = getattr(self, "booking_com_manual_window", None)
-        if dialog is not None and dialog.winfo_exists():
-            dialog.destroy()
-        self.booking_com_manual_window = None
         for name in ("active_guest_var", "active_room_var", "active_revenue_var", "active_checkout_var",
-                     "active_nights_var", "active_booking_details_var", "active_booking_title_var",
-                     "active_booking_status_label", "active_copy_button", "active_mute_button",
-                     "active_manual_button", "active_guest_label", "active_hero", "active_menu"):
+                     "active_nights_var", "active_copy_button", "active_guest_label", "active_hero", "active_menu"):
             setattr(self, name, None)
-        self.active_sound_muted = False
 
     def _enforce_quiet_hours(self) -> bool:
         quiet = self._quiet_hours_active()
@@ -921,8 +843,6 @@ class BookingNotifierApp:
             self.config = updated
             set_start_with_windows(bool(self.config["start_with_windows"]))
             self.f92_worker.configure(self.config)
-            self.booking_com_worker.configure(self.config)
-            self._refresh_booking_popup_state()
             self._release_pending_alerts()
             self._restore_f92_display()
             self.start_monitoring()
@@ -969,166 +889,6 @@ class BookingNotifierApp:
         else:
             self.save_and_start()
 
-    def _save_booking_com_preferences(self) -> None:
-        # Login must work even when IMAP settings are not yet filled in.
-        self.config["booking_com_enrichment"] = self.booking_com_enabled_var.get()
-        mode_var = getattr(self, "booking_com_mode_var", None)
-        self.config["booking_com_enrichment_mode"] = (
-            "manual" if mode_var is not None and mode_var.get().startswith("Dán thủ công") else "visible"
-        )
-        self.config["booking_com_browser"] = self.booking_com_browser_var.get()
-        self.config_store.save(self.config)
-        self.booking_com_worker.configure(self.config)
-        self._refresh_booking_popup_state()
-
-    def _update_booking_com_controls(self) -> None:
-        manual = self.booking_com_mode_var.get().startswith("Dán thủ công")
-        self.booking_com_login_button.configure(text="Mở Booking.com" if manual else "Đăng nhập Booking.com")
-        self.booking_com_browser_control.configure(state="disabled" if manual else "readonly")
-        self.booking_com_background_button.configure(state="disabled" if manual else "normal")
-
-    def login_booking_com(self, alert: BookingEvent | None = None) -> None:
-        self._save_booking_com_preferences()
-        if self.config.get("booking_com_enrichment_mode", "visible") == "manual":
-            self.open_booking_com_reference(alert)
-            return
-        self.booking_com_status_var.set("Đang mở cửa sổ đăng nhập Booking.com…")
-        self.booking_com_worker.login(alert)
-
-    def refresh_booking_com(self) -> None:
-        self._save_booking_com_preferences()
-        if self.config.get("booking_com_enrichment_mode", "visible") == "manual":
-            self.open_booking_com_manual_dialog()
-            return
-        self.booking_com_worker.wake(force=True)
-
-    def background_booking_com(self) -> None:
-        if self.config.get("booking_com_enrichment_mode", "visible") == "manual":
-            self.booking_com_status_var.set("Đang dùng chế độ thủ công; không có trình duyệt ẩn chạy nền.")
-            return
-        self.booking_com_worker.background()
-
-    def _booking_com_manual_target(self, alert: BookingEvent | None = None) -> BookingEvent | None:
-        if alert is not None and alert.source == "Booking.com":
-            return alert
-        active = getattr(self, "active_alert", None)
-        if active is not None and active.source == "Booking.com":
-            return active
-        tree = getattr(self, "history_tree", None)
-        for item in tree.selection() if tree is not None else ():
-            record = getattr(self, "history_rows", {}).get(item, {})
-            if record.get("source") == "Booking.com" and record.get("checkin_date") == date.today().isoformat():
-                return BookingEvent.from_dict(record)
-        candidates = self.state.booking_com_candidates(date.today(), include_unlinked=True)
-        return next((item for item in candidates if not booking_com_details_ready(item)), None)
-
-    def open_booking_com_reference(self, alert: BookingEvent | None = None) -> None:
-        target = self._booking_com_manual_target(alert)
-        if target is None:
-            self.booking_com_status_var.set("Chưa có booking Booking.com hôm nay đang chờ bổ sung.")
-            return
-        details_url = canonical_details_url(target.details_url, target.booking_id)
-        url = details_url or ADMIN_HOME
-        try:
-            if not webbrowser.open(url, new=2):
-                raise RuntimeError("Trình duyệt không nhận được yêu cầu mở trang")
-            self.booking_com_status_var.set(
-                f"Đã mở booking {target.booking_id} bằng trình duyệt bình thường."
-                if details_url else f"Đã mở Extranet. Hãy tìm booking {target.booking_id}, rồi nhập chi tiết vào app."
-            )
-        except Exception:
-            self.booking_com_status_var.set("Không mở được trình duyệt; hãy sao chép liên kết booking và mở thủ công.")
-
-    @staticmethod
-    def _manual_checkout(value: str, checkin: date) -> date:
-        text = value.strip()
-        for pattern in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-            try:
-                parsed = datetime.strptime(text, pattern).date()
-                if parsed <= checkin:
-                    raise ValueError("Ngày trả phải sau ngày nhận.")
-                return parsed
-            except ValueError as exc:
-                if "sau ngày nhận" in str(exc):
-                    raise
-        raise ValueError("Ngày trả không hợp lệ; dùng DD/MM/YYYY.")
-
-    def open_booking_com_manual_dialog(self, alert: BookingEvent | None = None) -> None:
-        target = self._booking_com_manual_target(alert)
-        if target is None:
-            messagebox.showinfo("Booking.com", "Không có booking Booking.com hôm nay đang chờ bổ sung.", parent=self.settings_window)
-            return
-        existing = getattr(self, "booking_com_manual_window", None)
-        if existing is not None and existing.winfo_exists():
-            existing.transient("")
-            existing.deiconify()
-            existing.lift()
-            existing.focus_force()
-            return
-        dialog = tk.Toplevel(self.root, name="booking_manual_details")
-        self.booking_com_manual_window = dialog
-        dialog.title(f"Nhập chi tiết Booking.com {target.booking_id}")
-        parent = getattr(self, "active_popup", None)
-        if parent is None or not parent.winfo_viewable():
-            parent = self.settings_window if self.settings_window.winfo_viewable() else self.root
-        if parent.winfo_viewable():
-            dialog.transient(parent)
-        dialog.attributes("-topmost", True)
-        self._fit_desktop_window(dialog, 560, 560)
-        dialog.configure(bg=self.COLORS["surface"])
-        body = ttk.Frame(dialog, style="Card.TFrame", padding=22)
-        body.pack(fill="both", expand=True)
-        ttk.Label(body, text=f"Booking {target.booking_id} • check-in {target.checkin_date:%d/%m/%Y}",
-                  style="SectionTitle.TLabel").pack(anchor="w")
-        ttk.Label(body, text="Mở Extranet bằng trình duyệt bình thường, sao chép thông tin rồi điền vào đây. App không tự điều khiển hoặc chạy web ẩn.",
-                  style="CardMuted.TLabel", wraplength=500).pack(anchor="w", pady=(6, 16))
-        fields: dict[str, tk.StringVar] = {}
-        defaults = {
-            "guest": target.guest_name,
-            "room": target.room_type,
-            "checkout": target.checkout_date.strftime("%d/%m/%Y") if target.checkout_date else "",
-            "total": target.total_revenue,
-        }
-        labels = (("guest", "Họ và tên khách"), ("room", "Hạng phòng + số lượng, ví dụ Superior Room x1"),
-                  ("checkout", "Ngày trả phòng (DD/MM/YYYY)"), ("total", "Tổng tiền phòng"))
-        for key, label in labels:
-            ttk.Label(body, text=label, style="Field.TLabel").pack(anchor="w", pady=(0, 4))
-            fields[key] = tk.StringVar(master=dialog, value=defaults[key] or "")
-            ttk.Entry(body, name=key, textvariable=fields[key]).pack(fill="x", pady=(0, 10))
-        feedback = tk.StringVar(master=dialog)
-        ttk.Label(body, name="manual_feedback", textvariable=feedback, style="CardMuted.TLabel", wraplength=500).pack(anchor="w")
-
-        def save_manual() -> None:
-            try:
-                guest, room, total = (fields[key].get().strip() for key in ("guest", "room", "total"))
-                if not guest or not room or not total:
-                    raise ValueError("Hãy điền đủ họ tên, hạng phòng/số lượng và tổng tiền.")
-                if not excel_amount_value(total):
-                    raise ValueError("Tổng tiền phải có số hợp lệ, ví dụ VND 500.000.")
-                checkout = self._manual_checkout(fields["checkout"].get(), target.checkin_date)
-                enriched = replace(target, status="new", guest_name=guest, room_type=room,
-                                   checkout_date=checkout, total_revenue=total,
-                                   details_loaded_at=datetime.now().isoformat(timespec="seconds"))
-                if not self.state.enrich_booking_com_manual(enriched, date.today()):
-                    raise ValueError("Booking đã thay đổi hoặc không còn là booking hôm nay.")
-                self.events.put(("history_changed", None))
-                self.booking_com_status_var.set(f"Đã lưu chi tiết thủ công cho Booking.com {target.booking_id}.")
-                dialog.destroy()
-            except Exception as exc:
-                feedback.set(str(exc))
-
-        actions = ttk.Frame(body, style="Card.TFrame")
-        actions.pack(fill="x", pady=(12, 0))
-        ttk.Button(actions, name="open_booking_reference", text="Mở Booking.com", command=lambda: self.open_booking_com_reference(target),
-                   style="Secondary.TButton").pack(side="left")
-        ttk.Button(actions, name="save_manual_details", text="Lưu chi tiết", command=save_manual, style="Accent.TButton").pack(side="right")
-        ttk.Button(actions, name="cancel_manual_details", text="Hủy", command=dialog.destroy, style="Secondary.TButton").pack(side="right", padx=(0, 8))
-        dialog.update_idletasks()
-        dialog.deiconify()
-        dialog.lift()
-        dialog.focus_force()
-        dialog.grab_set()
-
     def test_connection(self) -> None:
         try:
             config = self._collect_config()
@@ -1143,7 +903,7 @@ class BookingNotifierApp:
                 test_imap_connection(config, password)
                 self.events.put(("connection_test", (True, "Kết nối IMAP thành công; TLS đã được xác minh.")))
             except Exception as exc:
-                self.events.put(("connection_test", (False, str(exc))))
+                self.events.put(("connection_test", (False, friendly_error(exc))))
 
         threading.Thread(target=worker, name="ImapTest", daemon=True).start()
 
@@ -1224,12 +984,6 @@ class BookingNotifierApp:
                 elif event_type == "history_changed":
                     self.refresh_history()
                     self._refresh_pending_details()
-                    self.booking_com_worker.wake()
-                elif event_type == "booking_com_status":
-                    self.booking_com_status_var.set(str(payload))
-                    self.log(str(payload))
-                    self.booking_com_popup_status = str(payload)
-                    self._refresh_booking_popup_state()
                 elif event_type in {"expedia_print_ready", "booking_print_ready"}:
                     self.print_loading = False
                     alert, image, error = payload
@@ -1344,6 +1098,11 @@ class BookingNotifierApp:
     def enqueue_alert(self, alert: BookingEvent) -> None:
         if alert.checkin_date != date.today() or alert.status not in {"new", "active"}:
             return
+        if alert.source == "Booking.com":
+            # Old OTA pending records can still contain retired browser data.
+            alert = BookingEvent(source=alert.source, booking_id=alert.booking_id,
+                                 checkin_date=alert.checkin_date, status=alert.status,
+                                 subject=alert.subject, sender=alert.sender, received_at=alert.received_at)
         # The minute tick/startup can show a persisted popup before the IMAP
         # worker emits its alert. Closing that popup must also block the late event.
         if self.state.is_acknowledged(alert):
@@ -1427,15 +1186,13 @@ class BookingNotifierApp:
             self.f92_worker.idle()
             return
         self.active_alert = alert
-        self.active_sound_muted = False
-        self.active_mute_button = None
-        self.active_booking_title_var = None
-        self.active_booking_details_var = None
-        self.active_booking_status_label = None
-        self.active_manual_button = None
         popup = tk.Toplevel(self.root)
         self.active_popup = popup
         popup.title(f"{alert.source} • Check-in hôm nay")
+        if alert.source == "Booking.com":
+            self._build_booking_code_popup(popup, alert)
+            self._announce_alert(alert)
+            return
         width, height = 620, 700 if alert.source in {"Expedia", "Traveloka"} else 640
         popup.booking_base_height = height
         x = max(0, (popup.winfo_screenwidth() - width) // 2)
@@ -1456,8 +1213,8 @@ class BookingNotifierApp:
             hero_text, text="KHÁCH ĐẾN HÔM NAY", bg=self.COLORS["primary"], fg="#BFC9D8",
             font=("Segoe UI Semibold", 9),
         ).pack(anchor="w")
-        placeholder = "Chờ bổ sung" if alert.source == "Booking.com" else "—"
-        self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or ("Booking mới đã nhận" if alert.source == "Booking.com" else "Chưa đọc được tên khách"))
+        placeholder = "—"
+        self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or "Chưa đọc được tên khách")
         self.active_room_var = tk.StringVar(master=popup, value=alert.room_type or placeholder)
         self.active_revenue_var = tk.StringVar(master=popup, value=alert.total_revenue or placeholder)
         self.active_checkout_var = tk.StringVar(
@@ -1483,41 +1240,11 @@ class BookingNotifierApp:
         footer.pack(fill="x", side="bottom")
         body = tk.Frame(popup, bg=self.COLORS["surface"], padx=28, pady=20)
         body.pack(fill="both", expand=True)
-        if alert.source == "Booking.com":
-            popup.booking_detail_body = body
-            popup.booking_detail_footer = footer
-            details_canvas = tk.Canvas(body, bg=self.COLORS["surface"], highlightthickness=0, height=1, width=1)
-            details_canvas.pack(side="left", fill="both", expand=True)
-            details_scrollbar = ttk.Scrollbar(body, orient="vertical", command=details_canvas.yview)
-            details_canvas.configure(yscrollcommand=details_scrollbar.set)
-            popup.booking_detail_canvas = details_canvas
-        else:
-            details_canvas = None
         info_card = tk.Frame(
-            details_canvas or body, bg=self.COLORS["surface_alt"], highlightbackground=self.COLORS["border"], highlightthickness=1,
+            body, bg=self.COLORS["surface_alt"], highlightbackground=self.COLORS["border"], highlightthickness=1,
             padx=18, pady=12,
         )
-        if details_canvas is None:
-            info_card.pack(fill="x")
-        else:
-            card_window = details_canvas.create_window((0, 0), window=info_card, anchor="nw")
-
-            def sync_details_scroll(_event: object = None) -> None:
-                available_width = details_canvas.winfo_width()
-                if int(float(details_canvas.itemcget(card_window, "width"))) != available_width:
-                    details_canvas.itemconfigure(card_window, width=available_width)
-                content_height = info_card.winfo_reqheight()
-                if int(details_canvas.cget("height")) != content_height:
-                    details_canvas.configure(height=content_height)
-                details_canvas.configure(scrollregion=details_canvas.bbox("all"))
-                if content_height > details_canvas.winfo_height() + 1:
-                    if not details_scrollbar.winfo_manager():
-                        details_scrollbar.pack(side="right", fill="y", padx=(6, 0))
-                elif details_scrollbar.winfo_manager():
-                    details_scrollbar.pack_forget()
-
-            info_card.bind("<Configure>", sync_details_scroll)
-            details_canvas.bind("<Configure>", sync_details_scroll)
+        info_card.pack(fill="x")
         rows = [
             ("Mã booking", alert.booking_id),
             ("Hạng phòng", alert.room_type or "—"),
@@ -1526,10 +1253,6 @@ class BookingNotifierApp:
             ("Số đêm", str(alert.nights) if alert.nights is not None else "—"),
             ("Tổng thu", alert.total_revenue or "—"),
         ]
-        # Booking.com reserves space for its asynchronous status and mute control.
-        # Keep nights beside checkout rather than adding another full row.
-        if alert.source == "Booking.com":
-            rows = [(label, value) for label, value in rows if label != "Số đêm"]
         detail_vars = {
             "Hạng phòng": self.active_room_var, "Tổng thu": self.active_revenue_var,
             "Check-out": self.active_checkout_var, "Số đêm": self.active_nights_var,
@@ -1546,61 +1269,8 @@ class BookingNotifierApp:
                 anchor="w", bg=self.COLORS["surface_alt"], fg=self.COLORS["text"],
                 font=("Segoe UI Semibold", 10), wraplength=380, justify="left",
             ).pack(side="left", fill="x", expand=True)
-            if alert.source == "Booking.com" and label == "Check-out":
-                tk.Label(row, text="SỐ ĐÊM", bg=self.COLORS["surface_alt"], fg=self.COLORS["muted"],
-                         font=("Segoe UI Semibold", 8)).pack(side="left", padx=(12, 8))
-                tk.Label(row, textvariable=self.active_nights_var, bg=self.COLORS["surface_alt"],
-                         fg=self.COLORS["text"], font=("Segoe UI Semibold", 10)).pack(side="left")
             if index < len(rows) - 1:
                 tk.Frame(info_card, bg="#E8E2D8", height=1).pack(fill="x", pady=(2, 0))
-        if details_canvas is not None:
-            def scroll_details(event: tk.Event) -> str:
-                if info_card.winfo_reqheight() > details_canvas.winfo_height():
-                    details_canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
-                return "break"
-
-            for row in info_card.winfo_children():
-                row.bind("<MouseWheel>", scroll_details)
-                for widget in row.winfo_children():
-                    widget.bind("<MouseWheel>", scroll_details)
-            details_canvas.bind("<MouseWheel>", scroll_details)
-            info_card.bind("<MouseWheel>", scroll_details)
-
-        if alert.source == "Booking.com":
-            status_card = tk.Frame(footer, name="booking_status", bg=self.COLORS["surface_alt"],
-                                   highlightbackground=self.COLORS["border"], highlightthickness=1, padx=14, pady=12)
-            status_card.pack(fill="x", pady=(0, 10))
-            manual_mode = str(self.config.get("booking_com_enrichment_mode", "visible")) == "manual"
-            status_card.columnconfigure(0, weight=1)
-            status_card.columnconfigure(1, weight=0)
-            if manual_mode:
-                status_card.columnconfigure(2, weight=0)
-            self.active_booking_title_var = tk.StringVar(master=popup)
-            self.active_booking_details_var = tk.StringVar(master=popup)
-            self.active_booking_status_label = tk.Label(
-                status_card, textvariable=self.active_booking_title_var, anchor="w", justify="left",
-                bg=self.COLORS["surface_alt"], fg=self.COLORS["booking.com"], font=("Segoe UI Semibold", 11),
-            )
-            self.active_booking_status_label.grid(row=0, column=0, columnspan=3 if manual_mode else 1,
-                                                  sticky="w", padx=(0, 12))
-            tk.Label(status_card, textvariable=self.active_booking_details_var, anchor="w", justify="left",
-                     wraplength=480 if manual_mode else 360, bg=self.COLORS["surface_alt"], fg=self.COLORS["muted"],
-                     font=("Segoe UI", 9)).grid(row=1, column=0, columnspan=3 if manual_mode else 1,
-                                              sticky="w", pady=(5, 0), padx=(0, 12))
-            if manual_mode:
-                self.active_manual_button = ttk.Button(
-                    status_card, name="manual_booking_details", text="Nhập chi tiết",
-                    command=lambda selected=alert: self.open_booking_com_manual_dialog(selected),
-                    style="Secondary.TButton", takefocus=True,
-                )
-                self.active_manual_button.grid(row=2, column=1, sticky="e", padx=(0, 8), pady=(10, 0), ipady=6)
-            self.active_mute_button = ttk.Button(
-                status_card, name="mute_booking_sound", text="Tắt chuông", command=self.mute_active_alert,
-                style="Secondary.TButton", takefocus=True,
-            )
-            self.active_mute_button.grid(row=2 if manual_mode else 0, column=2 if manual_mode else 1,
-                                         rowspan=1 if manual_mode else 2, sticky="e", ipady=6,
-                                         pady=(10, 0) if manual_mode else 0)
         self.copy_feedback_var = tk.StringVar(master=popup, value="Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
         tk.Label(
             footer, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"], fg=self.COLORS["muted"],
@@ -1633,7 +1303,6 @@ class BookingNotifierApp:
         if alert.source in {"Expedia", "Traveloka"}:
             self.active_menu.add_command(label=f"In phiếu {alert.source} - 1 trang A4",
                                          command=lambda selected=alert: self._request_source_print(selected))
-        self._refresh_booking_popup_state()
         popup.bind("<Button-3>", self.show_active_context_menu)
         popup.bind("<Button-2>", self.show_active_context_menu)
         popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
@@ -1646,6 +1315,49 @@ class BookingNotifierApp:
         popup.geometry(f"{width}x{height}+{x}+{y}")
         self._fit_popup_guest_header()
         self._present_alert_popup(popup)
+        self._announce_alert(alert)
+
+    def _build_booking_code_popup(self, popup: tk.Toplevel, alert: BookingEvent) -> None:
+        popup.configure(bg=self.COLORS["surface"])
+        popup.resizable(False, False)
+        popup.attributes("-topmost", True)
+        hero = tk.Frame(popup, bg=self.COLORS["primary"], padx=28, pady=22)
+        hero.pack(fill="x")
+        tk.Label(hero, text="BOOKING.COM • KHÁCH ĐẾN HÔM NAY",
+                 bg=self.COLORS["primary"], fg="#BFC9D8", font=("Segoe UI Semibold", 10)).pack(anchor="w")
+        tk.Label(hero, name="booking_code", text=alert.booking_id,
+                 bg=self.COLORS["primary"], fg=self.COLORS["header_text"],
+                 font=("Segoe UI Semibold", 32)).pack(anchor="w", pady=(8, 0))
+        tk.Label(popup, name="booking_arrival", text=f"Check-in hôm nay • {alert.checkin_date:%d/%m/%Y}",
+                 bg=self.COLORS["surface"], fg=self.COLORS["muted"], font=("Segoe UI", 11)).pack(anchor="w", padx=28, pady=(18, 10))
+        self.copy_feedback_var = tk.StringVar(master=popup)
+        tk.Label(popup, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"],
+                 fg=self.COLORS["muted"], font=("Segoe UI", 9)).pack(anchor="w", padx=28, pady=(0, 10))
+        actions = tk.Frame(popup, name="booking_actions", bg=self.COLORS["surface"])
+        actions.pack(fill="x", padx=28, pady=(0, 22))
+        actions.columnconfigure((0, 1), weight=1, uniform="popup_actions")
+        actions.rowconfigure(0, minsize=96)
+        self.active_copy_button = ttk.Button(actions, name="copy_booking", text="Sao chép mã",
+                                            command=self.copy_active_alert, style="Popup.Primary.TButton")
+        self.active_copy_button.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        ttk.Button(actions, name="close_notification", text="Đóng thông báo",
+                   command=self.acknowledge_alert, style="Popup.Secondary.TButton").grid(
+                       row=0, column=1, sticky="nsew", padx=(6, 0))
+        self.active_menu = tk.Menu(popup, tearoff=False)
+        self.active_menu.add_command(label="Sao chép mã đặt phòng", command=self.copy_active_alert)
+        popup.bind("<Button-3>", self.show_active_context_menu)
+        popup.bind("<Button-2>", self.show_active_context_menu)
+        popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
+        popup.protocol("WM_DELETE_WINDOW", self.acknowledge_alert)
+        popup.update_idletasks()
+        button_width = max(child.winfo_reqwidth() for child in actions.winfo_children())
+        width = max(560, popup.winfo_reqwidth(), 2 * button_width + 68)
+        height = max(340, popup.winfo_reqheight())
+        x, y = max(0, (popup.winfo_screenwidth() - width) // 2), max(0, (popup.winfo_screenheight() - height) // 2 - 20)
+        popup.geometry(f"{width}x{height}+{x}+{y}")
+        self._present_alert_popup(popup)
+
+    def _announce_alert(self, alert: BookingEvent) -> None:
         self.log(f"POPUP {alert.source} {alert.booking_id or '(không có mã)'}: đã mở thông báo check-in hôm nay.")
         # An audio driver/file error must never dismiss a valid booking notification.
         try:
@@ -1668,8 +1380,6 @@ class BookingNotifierApp:
         if popup is None or label is None or hero is None:
             return
         popup.update_idletasks()
-        if hasattr(popup, "booking_detail_body"):
-            label.configure(wraplength=max(180, popup.winfo_width() - popup.booking_source_badge.winfo_reqwidth() - 112))
         limit = max(640, popup.winfo_screenheight() - 72)
         base = popup.booking_base_height
         for size in range(22, 13, -1):
@@ -1679,10 +1389,6 @@ class BookingNotifierApp:
             height = base + header_height - 118
             if height <= limit:
                 break
-        if hasattr(popup, "booking_detail_body"):
-            # Long multi-room details scroll; never put the actions off-screen.
-            height = min(limit, max(height, header_height + popup.booking_detail_body.winfo_reqheight()
-                                    + popup.booking_detail_footer.winfo_reqheight()))
         hero.configure(height=header_height)
         x, y = popup.winfo_x(), min(popup.winfo_y(), max(0, popup.winfo_screenheight() - height - 64))
         popup.geometry(f"{popup.winfo_width()}x{height}+{x}+{y}")
@@ -1772,59 +1478,10 @@ class BookingNotifierApp:
     def copy_active_alert(self) -> None:
         if not self.active_alert:
             return
-        if self.active_alert.source == "Booking.com" and not booking_com_details_ready(self.active_alert):
-            self._refresh_booking_popup_state()
-            if hasattr(self, "copy_feedback_var"):
-                self.copy_feedback_var.set("Sao chép sẽ mở khi đã lấy đủ thông tin booking.")
-            return
         copied = self._copy_alerts_to_clipboard([self.active_alert], "Đã sao chép booking sang Excel")
         if copied and hasattr(self, "copy_feedback_var"):
-            self.copy_feedback_var.set("Đã sao chép • Mở Excel và nhấn Ctrl+V")
-
-    def mute_active_alert(self) -> None:
-        """Silence this PC notification only; keep fetching, displaying and queuing."""
-        alert = getattr(self, "active_alert", None)
-        if alert is None or alert.source != "Booking.com" or getattr(self, "active_sound_muted", False):
-            return
-        self.stop_sound()
-        self.active_sound_muted = True
-        button = getattr(self, "active_mute_button", None)
-        if button is not None:
-            button.configure(text="Đã tắt chuông", state="disabled")
-        self._refresh_booking_popup_state()
-
-    def _refresh_booking_popup_state(self) -> None:
-        alert = getattr(self, "active_alert", None)
-        if alert is None or alert.source != "Booking.com":
-            return
-        state = booking_com_popup_state(
-            alert, bool(getattr(self, "config", {}).get("booking_com_enrichment", True)),
-            getattr(self, "booking_com_popup_status", ""),
-            str(getattr(self, "config", {}).get("booking_com_enrichment_mode", "visible")),
-        )
-        message = state.message
-        if getattr(self, "active_sound_muted", False):
-            message = message.replace("Bạn có thể tắt âm trong lúc chờ.", "Chuông đã tắt; popup vẫn chờ thông tin.")
-            message = message.replace("bạn có thể tắt âm trong lúc chờ.", "chuông đã tắt; popup vẫn chờ thông tin.")
-        for variable_name, value in (("active_booking_title_var", state.title),
-                                     ("active_booking_details_var", message)):
-            variable = getattr(self, variable_name, None)
-            if variable is not None:
-                variable.set(value)
-        label = getattr(self, "active_booking_status_label", None)
-        if label is not None:
-            label.configure(fg=self.COLORS["booking.com"] if state.phase in {"loading", "ready"}
-                            else "#835C22")
-        button = getattr(self, "active_copy_button", None)
-        if button is not None:
-            button.configure(state="normal" if state.ready else "disabled")
-        menu = getattr(self, "active_menu", None)
-        if menu is not None:
-            menu.entryconfigure(0, state="normal" if state.ready else "disabled")
-        feedback = getattr(self, "copy_feedback_var", None)
-        if state.ready and feedback is not None and feedback.get() == "Sao chép sẽ mở khi đã lấy đủ thông tin booking.":
-            feedback.set("Chép 9 cột mẫu cũ (STT trống) • Dán từ cột A trong Excel")
-        self._fit_popup_guest_header()
+            self.copy_feedback_var.set("Đã sao chép mã đặt phòng" if self.active_alert.source == "Booking.com"
+                                       else "Đã sao chép • Mở Excel và nhấn Ctrl+V")
 
     def _refresh_pending_details(self) -> None:
         """Update repaired details in-place: preserve the popup, focus and sound."""
@@ -1834,7 +1491,7 @@ class BookingNotifierApp:
             alerts.append(self.active_alert)
         for alert in alerts:
             saved = pending.get(alert.storage_id)
-            if saved is None or saved.checkin_date != alert.checkin_date:
+            if alert.source == "Booking.com" or saved is None or saved.checkin_date != alert.checkin_date:
                 continue
             changed = False
             for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "subject", "sender", "received_at", "details_url", "details_loaded_at"):
@@ -1843,10 +1500,9 @@ class BookingNotifierApp:
                     setattr(alert, field, value)
                     changed = True
             if alert is self.active_alert and changed:
-                placeholder = "Chờ bổ sung" if alert.source == "Booking.com" else "—"
+                placeholder = "—"
                 if self.active_guest_var is not None:
-                    self.active_guest_var.set(alert.guest_name or ("Booking mới đã nhận" if alert.source == "Booking.com"
-                                                                  else "Chưa đọc được tên khách"))
+                    self.active_guest_var.set(alert.guest_name or "Chưa đọc được tên khách")
                 if self.active_room_var is not None:
                     self.active_room_var.set(alert.room_type or placeholder)
                 for variable_name, value in (
@@ -1857,7 +1513,6 @@ class BookingNotifierApp:
                     variable = getattr(self, variable_name, None)
                     if variable is not None:
                         variable.set(value)
-                self._refresh_booking_popup_state()
                 self._fit_popup_guest_header()
                 try:
                     self.f92_worker.notify(alert, play_sound=False)
@@ -1897,6 +1552,8 @@ class BookingNotifierApp:
         for record in self.state.history():
             if record.get("checkin_date") != self.history_day.isoformat():
                 continue
+            if record.get("source") == "Booking.com":
+                record = {**record, "guest_name": "", "room_type": "", "total_revenue": ""}
             index = len(self.history_rows)
             self.history_rows[str(index)] = dict(record)
             checkin = str(record.get("checkin_date", ""))
@@ -1918,8 +1575,9 @@ class BookingNotifierApp:
             self.history_tree.selection_set(row_id)
         self.history_tree.focus(row_id)
         self.history_menu.delete(0, "end")
-        self.history_menu.add_command(label="Sao chép dòng đã chọn sang Excel", command=self.copy_selected_history)
         record = self.history_rows.get(row_id)
+        self.history_menu.add_command(label="Sao chép mã đặt phòng" if record and record.get("source") == "Booking.com"
+                                      else "Sao chép dòng đã chọn sang Excel", command=self.copy_selected_history)
         if record and record.get("source") in {"Expedia", "Traveloka"}:
             selected = BookingEvent.from_dict(record)
             self.history_menu.add_command(label=f"In phiếu {selected.source} - 1 trang A4",
@@ -2098,15 +1756,11 @@ class BookingNotifierApp:
         return "break"
 
     def _copy_alerts_to_clipboard(self, alerts: list[BookingEvent], status: str) -> bool:
-        if any(alert.source == "Booking.com" and not booking_com_details_ready(alert)
-               for alert in alerts):
-            messagebox.showinfo("Chưa đủ chi tiết Booking.com", "Email Booking.com này chưa đủ thông tin. Trong Cài đặt, bấm Nhập/dán chi tiết để bổ sung trước khi chép Excel.",
-                                parent=getattr(self, "active_popup", None) or self.root)
-            return False
         self.root.clipboard_clear()
-        self.root.clipboard_append(excel_tsv_rows(alerts))
+        self.root.clipboard_append("\r\n".join(alert.booking_id if alert.source == "Booking.com" else excel_tsv(alert)
+                                               for alert in alerts))
         self.root.update_idletasks()
-        self.set_status(status)
+        self.set_status("Đã sao chép mã đặt phòng" if all(alert.source == "Booking.com" for alert in alerts) else status)
         return True
 
     def set_status(self, value: str) -> None:
@@ -2145,11 +1799,6 @@ class BookingNotifierApp:
         if self.closing:
             return
         self.hidden_to_tray = True
-        manual = getattr(self, "booking_com_manual_window", None)
-        if manual is not None and manual.winfo_exists():
-            # A modal transient inherits its parent's withdrawn state. Keep
-            # entered details and the grab on a visible, independent form.
-            manual.transient("")
         self.settings_window.withdraw()
         # Never withdraw without a usable icon: Taskbar remains the safe fallback.
         if self.tray.available:
@@ -2158,10 +1807,6 @@ class BookingNotifierApp:
             self.root.iconify()
         if self.active_popup is not None:
             self._present_alert_popup(self.active_popup)
-        if manual is not None and manual.winfo_exists():
-            manual.deiconify()
-            manual.lift()
-            manual.focus_force()
 
     def restore_main_window(self) -> None:
         if self.closing:
@@ -2189,17 +1834,10 @@ class BookingNotifierApp:
             self.monitor.stop()
             self.monitor.join(3)
         self.f92_worker.close(3)
-        # Let the owning worker close its profile/driver before OTA replaces us.
-        # No Tk or browser API is called from a different owning thread.
-        self.booking_com_worker.close(35)
         self.stop_sound()
         self.root.destroy()
 
 def main() -> int:
-    if len(sys.argv) == 3 and sys.argv[1] == "--booking-browser-smoke":
-        from booking_notifier.booking_com_browser import packaged_browser_smoke
-
-        return packaged_browser_smoke(Path(sys.argv[2]))
     helper_result = run_update_helper_from_argv(sys.argv)
     if helper_result is not None:
         return helper_result

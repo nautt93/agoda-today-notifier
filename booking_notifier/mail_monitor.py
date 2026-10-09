@@ -9,6 +9,7 @@ import socket
 import ssl
 import threading
 import time
+from contextlib import contextmanager
 from datetime import date, datetime
 from email import message_from_bytes, policy
 from typing import Any
@@ -23,6 +24,49 @@ LOGGER = logging.getLogger(__name__)
 RECENT_MESSAGE_LIMIT = 20  # Bootstrap only; subsequent scans read every new UID.
 DETAIL_REPAIR_RETRY_SECONDS = 15 * 60
 DETAIL_REPAIR_MESSAGE_LIMIT = 3
+
+
+class ImapAuthenticationError(imaplib.IMAP4.error):
+    """A rejected LOGIN, distinct from a disconnected or failed mailbox command."""
+
+
+def _login(client: Any, address: str, password: str) -> None:
+    try:
+        client.login(address, password)
+    except imaplib.IMAP4.abort:
+        raise
+    except imaplib.IMAP4.error as exc:
+        raise ImapAuthenticationError("IMAP LOGIN rejected") from exc
+
+
+def _selected_mailbox_count(status: str, counts: Any) -> int:
+    if status != "OK":
+        raise RuntimeError("Không mở được Inbox; app sẽ thử kết nối lại.")
+    raw_count = counts[0] if isinstance(counts, (list, tuple)) and counts else None
+    try:
+        count = raw_count.decode("ascii") if isinstance(raw_count, bytes) else str(raw_count)
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("Máy chủ IMAP trả số thư không hợp lệ; chưa thay đổi mốc đọc thư.") from exc
+    if not count.isascii() or not count.isdigit():
+        raise RuntimeError("Máy chủ IMAP trả số thư không hợp lệ; chưa thay đổi mốc đọc thư.")
+    return int(count)
+
+
+def _search_uids(status: str, data: Any, error_message: str) -> list[int]:
+    if status != "OK" or not isinstance(data, (list, tuple)) or not data or data[0] is None:
+        raise RuntimeError(error_message)
+    raw = data[0]
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise RuntimeError(error_message) from exc
+    if not isinstance(raw, str):
+        raise RuntimeError(error_message)
+    tokens = raw.split()
+    if any(not token.isascii() or not token.isdigit() or not 0 < int(token) <= 0xFFFFFFFF for token in tokens):
+        raise RuntimeError(error_message)
+    return sorted({int(token) for token in tokens})
 
 
 def is_quiet_hours(when: datetime | None = None, start_hour: int = 0, end_hour: int = 8) -> bool:
@@ -72,12 +116,50 @@ class ImapMonitor(threading.Thread):
         self.wake_event = threading.Event()
         self.repair_requested = threading.Event()
         self.detail_repair_attempts: dict[str, float] = {}
+        self._session_lock = threading.Lock()
+        self._active_client: Any = None
         identity = f"{self.config.get('imap_host', '')}|{self.config.get('email_address', '')}|INBOX".lower()
         self.identity_hash = hashlib.sha256(identity.encode()).hexdigest()[:20]
 
     def stop(self) -> None:
         self.stop_event.set()
         self.wake_event.set()
+        # A blocked FETCH otherwise holds the old worker until its 30-second timeout.
+        # Shutdown wakes its read without sending a concurrent IMAP command from the UI.
+        with self._session_lock:
+            active_socket = getattr(self._active_client, "sock", None)
+        if active_socket is not None:
+            try:
+                active_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+    @contextmanager
+    def _imap_session(self, host: str, port: int, tls_context: ssl.SSLContext):
+        completed = False
+        scan_error: BaseException | None = None
+        try:
+            with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
+                with self._session_lock:
+                    self._active_client = client
+                try:
+                    yield client
+                except BaseException as exc:
+                    scan_error = exc
+                    raise
+                completed = True
+        except (imaplib.IMAP4.error, OSError):
+            if scan_error is not None:
+                # A LOGOUT error must not obscure a genuine rejected LOGIN.
+                raise scan_error from None
+            if not completed:
+                raise
+            # Results and UID checkpoints were saved before LOGOUT. A connection
+            # closing during cleanup must not turn a successful scan into a login error.
+            LOGGER.debug("IMAP connection closed during logout after completed scan")
+        finally:
+            with self._session_lock:
+                self._active_client = None
 
     def check_now(self) -> None:
         self.repair_requested.set()
@@ -102,6 +184,8 @@ class ImapMonitor(threading.Thread):
                     self.emit("log", f"Đã đọc {processed} email mới.")
                 self.emit("status", "Đang theo dõi 5 nguồn booking")
             except Exception as exc:
+                if self.stop_event.is_set():
+                    break
                 LOGGER.exception("IMAP scan failed")
                 self.emit("error", friendly_error(exc))
             delay = min(3600, max(30, int(self.config.get("poll_seconds", 60))))
@@ -110,6 +194,8 @@ class ImapMonitor(threading.Thread):
         self.emit("status", "Đã dừng theo dõi")
 
     def scan_mailbox(self) -> int:
+        if self.stop_event.is_set():
+            return 0
         host = str(self.config["imap_host"]).strip()
         port = int(self.config.get("imap_port", 993))
         address = str(self.config["email_address"]).strip()
@@ -123,13 +209,15 @@ class ImapMonitor(threading.Thread):
             self.detail_repair_attempts.clear()
             self.repair_requested.clear()
         # Snapshot BEFORE new mail: do not immediately fetch a new email twice.
-        incomplete = self.state.incomplete_confirmations(date.today())
+        incomplete = [record for record in self.state.incomplete_confirmations(date.today())
+                      if str(record.get("source", "")).lower() != "booking.com"]
         read_uids: set[int] = set()
-        with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
-            client.login(address, self.password)
+        with self._imap_session(host, port, tls_context) as client:
+            if self.stop_event.is_set():
+                return 0
+            _login(client, address, self.password)
             status, counts = client.select("INBOX", readonly=True)
-            if status != "OK":
-                raise RuntimeError("Không mở được Inbox")
+            count = _selected_mailbox_count(status, counts)
             uid_validity = ""
             try:
                 _, values = client.response("UIDVALIDITY")
@@ -146,7 +234,6 @@ class ImapMonitor(threading.Thread):
             if position is None:
                 position = self.state.mailbox_read_position(f"incremental:p7:{self.identity_hash}:{uid_validity}")
             refresh_details = position is not None and self.state.mailbox_parser_version(mailbox_key) != PARSER_STATE_VERSION
-            count = int(counts[0])
             recent_criteria = (f"{max(1, count - RECENT_MESSAGE_LIMIT + 1)}:*",) if count else ("ALL",)
             if position is None:
                 # SEARCH sequence range returns UIDs for only the last 20 entries,
@@ -155,17 +242,14 @@ class ImapMonitor(threading.Thread):
             else:
                 criteria = ("UID", f"{position[0] + 1}:*")
             status, data = client.uid("search", None, *criteria)
-            if status != "OK" or not data or data[0] is None:
-                raise RuntimeError("Không tìm được email trong Inbox")
-            found = sorted({int(uid) for uid in data[0].split()})
+            found = _search_uids(status, data, "Không tìm được email trong Inbox; app sẽ thử lại.")
             # IMAP n:* also matches the last UID when n is greater than that UID.
             uids = found[-RECENT_MESSAGE_LIMIT:] if position is None else [uid for uid in found if uid > position[0]]
             new_count = len(uids)
             if refresh_details:
                 status, recent_data = client.uid("search", None, *recent_criteria)
-                if status != "OK" or not recent_data or recent_data[0] is None:
-                    raise RuntimeError("Không đọc được thư gần nhất để bổ sung tên khách/hạng phòng.")
-                recent_uids = sorted({int(uid) for uid in recent_data[0].split()})[-RECENT_MESSAGE_LIMIT:]
+                recent_uids = _search_uids(status, recent_data,
+                                          "Không đọc được thư gần nhất để bổ sung tên khách/hạng phòng.")[-RECENT_MESSAGE_LIMIT:]
                 uids = sorted(set(uids) | set(recent_uids))
                 self.emit("log", f"Nâng cấp parser: kiểm tra nguồn mới và bổ sung tên khách/hạng phòng từ tối đa {RECENT_MESSAGE_LIMIT} thư gần nhất; không báo lặp booking đã đóng.")
             # Preserve both the old cursor and unfinished batch during the 1.7.5 migration.
@@ -190,7 +274,7 @@ class ImapMonitor(threading.Thread):
                     # Direct body fetch matches 1.5.5 and avoids a second round-trip/header gate.
                     read_uids.add(uid_number)
                     status, payload = client.uid("fetch", uid_raw, "(BODY.PEEK[])")
-                except imaplib.IMAP4.abort:
+                except (imaplib.IMAP4.abort, OSError):
                     raise
                 except Exception:
                     failed_count += 1
@@ -200,6 +284,17 @@ class ImapMonitor(threading.Thread):
                     continue
                 raw = _response_bytes(payload) if status == "OK" else None
                 if not raw:
+                    if status == "OK":
+                        # Expunged/moved UIDs return FETCH OK with no body. Confirm
+                        # absence before removing a durable retry, so server errors
+                        # cannot silently drop a still-existing reservation email.
+                        exists_status, exists_data = client.uid("search", None, "UID", uid)
+                        existing = _search_uids(exists_status, exists_data,
+                                                "Không xác minh được email chưa tải; app sẽ thử lại.")
+                        if uid_number not in existing:
+                            self.state.finish_mailbox_read(mailbox_key, uid_number)
+                            self.emit("log", f"Email UID {uid}: đã bị xóa/chuyển khỏi Inbox; bỏ mốc đọc lại.")
+                            continue
                     failed_count += 1
                     self.state.record_parse_failure(uid_key, "Không tải được nội dung email")
                     continue
@@ -306,6 +401,8 @@ class ImapMonitor(threading.Thread):
                 continue
             self.detail_repair_attempts[retry_key] = now
             source = str(record.get("source", "Agoda"))
+            if source.lower() == "booking.com":
+                continue
             try:
                 # Server-side lookup, not downloading/scanning 500 email bodies.
                 criteria = ("HEADER", "Subject", f'"{booking_id}"') if source.lower() == "agoda" else ("TEXT", f'"{booking_id}"')
@@ -336,7 +433,7 @@ class ImapMonitor(threading.Thread):
                     self.emit("log", f"Đã bổ sung họ tên/hạng phòng từ email gốc của {source} {booking_id}; không báo lặp.")
                 else:
                     self.emit("log", f"{source} {booking_id}: chưa bổ sung được dữ liệu; cần kiểm tra email gốc.")
-            except imaplib.IMAP4.abort:
+            except (imaplib.IMAP4.abort, OSError):
                 raise
             except Exception:
                 LOGGER.exception("Cannot recover cached booking %s", booking_id)
@@ -351,15 +448,20 @@ def test_imap_connection(config: dict[str, Any], password: str) -> None:
         ssl_context=context,
         timeout=30,
     ) as client:
-        client.login(str(config["email_address"]).strip(), password)
-        status, _ = client.select("INBOX", readonly=True)
-        if status != "OK":
-            raise RuntimeError("Không mở được Inbox")
+        _login(client, str(config["email_address"]).strip(), password)
+        status, counts = client.select("INBOX", readonly=True)
+        _selected_mailbox_count(status, counts)
 
 
 def friendly_error(exc: Exception) -> str:
-    if isinstance(exc, imaplib.IMAP4.error):
+    if isinstance(exc, imaplib.IMAP4.readonly):
+        return "Phiên Inbox đã thay đổi; app sẽ kết nối lại để đọc thư mới."
+    if isinstance(exc, imaplib.IMAP4.abort):
+        return "Kết nối IMAP bị ngắt; app sẽ tự kết nối lại, không mất mốc đọc thư."
+    if isinstance(exc, ImapAuthenticationError):
         return "Đăng nhập IMAP thất bại. Hãy kiểm tra email, mật khẩu ứng dụng và quyền IMAP."
+    if isinstance(exc, imaplib.IMAP4.error):
+        return "Máy chủ IMAP từ chối thao tác đọc thư; app sẽ thử kết nối lại."
     if isinstance(exc, ssl.SSLCertVerificationError):
         return "Chứng chỉ bảo mật của máy chủ IMAP không hợp lệ; kết nối đã bị chặn."
     if isinstance(exc, (socket.timeout, TimeoutError)):

@@ -37,7 +37,9 @@ def popup_action_buttons(popup):
 
     buttons = [child for child in descendants(popup) if isinstance(child, ttk.Button)
                and child.winfo_name() in {"copy_booking", "close_notification"}]
-    assert [button.cget("text") for button in buttons] == ["Sao chép", "Đóng thông báo"]
+    assert [button.cget("text") for button in buttons] in (
+        ["Sao chép", "Đóng thông báo"], ["Sao chép mã", "Đóng thông báo"],
+    )
     assert all(button.winfo_viewable() and button.winfo_height() >= 96 for button in buttons)
     assert all(button.winfo_width() >= 240 for button in buttons)
     assert abs(buttons[0].winfo_width() - buttons[1].winfo_width()) <= 1

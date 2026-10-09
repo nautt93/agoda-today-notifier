@@ -18,12 +18,11 @@ a = Analysis(
         "pystray._win32",
         "serial.tools.list_ports_windows",
         "cryptography.hazmat.primitives.asymmetric.ed25519",
-        "playwright.sync_api",  # Official hook includes the Node driver, not a browser/profile.
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["pystray._darwin", "pystray._appindicator", "pystray._gtk", "pystray._xorg"],
+    excludes=["pystray._darwin", "pystray._appindicator", "pystray._gtk", "pystray._xorg", "playwright"],
     noarchive=False,
     optimize=1,
 )

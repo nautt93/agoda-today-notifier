@@ -150,7 +150,9 @@ def exercise_upgrade(project: Path, asset: Path, expected: str, launcher: Path, 
                 assert installed_config["trip_sound_pack"] == "trip-mp3-v1", f"{label}: Trip pack marker missing"
                 assert installed_config["booking_com_sound_pack"] == "booking-com-mp3-v1", f"{label}: Booking.com pack marker missing"
                 if marked:
-                    changed = {"booking_com_sound_file", "booking_com_sound_pack"}
+                    retired = {"booking_com_enrichment", "booking_com_enrichment_mode", "booking_com_browser"}
+                    assert retired.isdisjoint(installed_config), f"{label}: retired browser settings returned"
+                    changed = {"booking_com_sound_file", "booking_com_sound_pack", *retired}
                     if not current:
                         changed.update({"trip_sound_pack", "trip_sound_file"})
                     for key, value in original_config.items():
@@ -184,6 +186,17 @@ def main() -> None:
         raise RuntimeError("This integration check requires Windows.")
     project = Path(__file__).resolve().parents[1]
     asset = Path(sys.argv[1]).resolve()
+    from PyInstaller.archive.readers import CArchiveReader
+
+    package = CArchiveReader(str(asset))
+    names = list(package.toc)
+    for name, entry in package.toc.items():
+        if entry[-1] == "z":
+            names.extend(package.open_embedded_archive(name).toc)
+    assert not any("playwright" in name.lower() or name.lower().endswith("node.exe")
+                   or name in {"booking_notifier.booking_com_browser", "booking_notifier.browser_windows",
+                               "booking_notifier.popup_state"} for name in names), "Retired browser machinery in EXE"
+    print("PASS: packaged EXE contains no Booking.com browser, Playwright or Node driver.", flush=True)
     expected = digest(asset)
     with tempfile.TemporaryDirectory(prefix="booking-ota-smoke-") as directory:
         scratch = Path(directory)

@@ -52,6 +52,18 @@ def test_clock_refresh_does_not_overwrite_booking():
     app.f92_worker.idle.assert_called_once()
 
 
+def test_booking_com_frame_only_shows_code_and_arrival_even_for_legacy_details():
+    basic = {"source": "Booking.com", "booking_id": "12345678901234567890", "checkin_date": date.today()}
+    plain = render_booking_image(basic)
+    legacy = render_booking_image({**basic, "guest_name": "OLD FULL NAME", "room_type": "OLD ROOM x2"})
+    try:
+        assert plain.size == (320, 480)
+        assert legacy.tobytes() == plain.tobytes()
+    finally:
+        plain.close()
+        legacy.close()
+
+
 def test_empty_alert_queue_restores_calendar():
     app = SimpleNamespace(active_alert=None, alert_queue=[], f92_worker=Mock(), _enforce_quiet_hours=lambda: False)
     BookingNotifierApp._show_next_alert(app)

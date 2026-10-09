@@ -47,15 +47,6 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-build.txt
       - run: pyinstaller --noconfirm --clean BookingNotifier.spec
-      - name: Verify packaged Booking.com browser driver
-        shell: pwsh
-        run: |
-          $report = Join-Path $env:RUNNER_TEMP "booking-browser-smoke.json"
-          $proc = Start-Process "dist/Booking-Checkin-Hom-Nay.exe" -ArgumentList @('--booking-browser-smoke', ('"' + $report + '"')) -Wait -PassThru
-          if (Test-Path $report) { Get-Content $report }
-          if ($proc.ExitCode -ne 0) { throw "Frozen Booking.com browser check failed" }
-          $result = Get-Content $report | ConvertFrom-Json
-          if (!$result.ok -or !$result.asynchronous_details_ready -or !$result.live_session_kept -or !$result.session_kept_after_window_close) { throw "Browser/session/detail readiness check did not complete" }
       - name: Verify packaged OTA and application restart
         run: python scripts/smoke_packaged_update.py dist/Booking-Checkin-Hom-Nay.exe
       - uses: actions/upload-artifact@v7.0.1
@@ -108,7 +99,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Sửa toàn bộ luồng bổ sung thông báo Booking.com: lưu đúng ngày, hiện form khi app ẩn xuống khay, popup không cắt hướng dẫn, bổ sung được booking thiếu link và booking đã đóng thông báo. Kiểm tra tổng tiền hợp lệ; cập nhật họ tên, phòng/số lượng, ngày trả và 9 cột Excel mà không phát chuông hoặc báo lại. Thư newsletter/nhắc thanh toán/yêu cầu đánh giá Booking.com được đọc một lần; mẫu booking mới lỗi vẫn thử lại. Mặc định thủ công, không chạy web ẩn. Giữ tài khoản, lịch sử, UID, âm thanh và giờ yên lặng. Đã kiểm thử thao tác lưu thật từ popup khi ẩn xuống khay, chống trùng và ba hồ sơ OTA cũ." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Booking.com chỉ báo mã đặt phòng check-in hôm nay, popup gọn với hai nút Sao chép mã và Đóng thông báo. Gỡ lấy chi tiết, nhập tay, trình duyệt, OTP và Playwright khỏi app/EXE. Sửa IMAP: phân biệt lỗi đăng nhập thật với mất kết nối, tự thử lại giữ UID; bỏ thư đã xóa khỏi danh sách thử lại; dừng socket cũ nhanh, không báo lỗi giả khi logout. Giữ tài khoản, lịch sử, âm thanh năm nguồn và giờ yên lặng. Agoda, Expedia, Traveloka, Trip giữ popup/Excel/in như cũ. Đã kiểm thử popup thật, chống trùng và OTA." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

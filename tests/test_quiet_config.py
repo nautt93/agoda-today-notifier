@@ -88,7 +88,7 @@ def test_invalid_stored_pair_loads_legacy_fallback_together_without_overwriting_
     assert _quiet_pair(loaded) == ("00:00", "08:00")
     assert loaded["quiet_hours_enabled"] is False
     assert loaded["password_encrypted"] == original["password_encrypted"]
-    assert loaded["booking_com_browser"] == original["booking_com_browser"]
+    assert "booking_com_browser" not in loaded
     assert loaded["trip_sound_file"] == original["trip_sound_file"]
     assert store.path.read_bytes() == previous_bytes
 
