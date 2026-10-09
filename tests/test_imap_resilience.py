@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import imaplib
+import ipaddress
 import queue
 import socket
 import ssl
@@ -232,7 +233,8 @@ def tls_imap_server(tmp_path):
                                                 encipher_only=None, decipher_only=None), critical=True)
                    .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
                    .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()), critical=False)
-                   .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+                   .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost"),
+                                                               x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), critical=False)
                    .sign(key, hashes.SHA256()))
     cert_path, key_path = tmp_path / "synthetic-cert.pem", tmp_path / "synthetic-key.pem"
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
@@ -320,7 +322,7 @@ def test_stop_interrupts_blocked_imap_socket_without_error_or_lost_pending_uid(t
     start, context, fetching, release, failures, commands = tls_imap_server
     port = start()
     monkeypatch.setattr(mail_monitor.ssl, "create_default_context", lambda: context)
-    monitor, state, events = make_monitor(tmp_path, imap_host="localhost", imap_port=port)
+    monitor, state, events = make_monitor(tmp_path, imap_host="127.0.0.1", imap_port=port)
     assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
 
     monitor.start()
@@ -346,7 +348,7 @@ def test_fragmented_tls_fetch_survives_polling_and_preserves_complete_email(tmp_
     payload = RAW_MESSAGE + b"X" * extra_bytes
     port = start(stalled=False, payload=payload)
     monkeypatch.setattr(mail_monitor.ssl, "create_default_context", lambda: context)
-    monitor, state, events = make_monitor(tmp_path, imap_host="localhost", imap_port=port)
+    monitor, state, events = make_monitor(tmp_path, imap_host="127.0.0.1", imap_port=port)
     assert monitor.scan_mailbox() == 1
     assert fetching.is_set() and failures == []
     key = f"incremental:v1:{monitor.identity_hash}:123"
@@ -369,7 +371,7 @@ def test_partial_tls_literal_expires_at_command_deadline_and_keeps_uid_pending(t
         return command(client, name, *args)
 
     monkeypatch.setattr(mail_monitor._CancellableImapTransport, "_command", short_test_deadline)
-    monitor, state, events = make_monitor(tmp_path, imap_host="localhost", imap_port=port)
+    monitor, state, events = make_monitor(tmp_path, imap_host="127.0.0.1", imap_port=port)
     with pytest.raises(TimeoutError, match="IMAP socket timed out"):
         monitor.scan_mailbox()
     assert fetching.is_set()
