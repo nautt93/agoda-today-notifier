@@ -210,7 +210,13 @@ def test_connection_test_login_rejection_is_not_hidden_by_logout_disconnect(monk
 
 def test_stop_interrupts_blocked_imap_socket_without_error_or_lost_pending_uid(tmp_path, monkeypatch):
     monitor, state, events = make_monitor(tmp_path)
-    client_socket, peer_socket = socket.socketpair()
+    # Use the real IMAP transport's TCP + 30-second timeout mode. Windows'
+    # fully blocking socketpair recv has different cancellation semantics.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        client_socket = socket.create_connection(listener.getsockname(), timeout=30)
+        peer_socket, _ = listener.accept()
     fetching = threading.Event()
 
     class Client:
