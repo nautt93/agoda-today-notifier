@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.27",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.27/Booking-Checkin-Hom-Nay-1.7.27.exe",
-  "sha256": "6f34bac86bb8ec349898a9417406b7784f6c4e2c159731c4cb749a1c254bcde1",
-  "size": 64327770,
-  "notes": "Sửa toàn bộ luồng bổ sung thông báo Booking.com: lưu đúng ngày, hiện form khi app ẩn xuống khay, popup không cắt hướng dẫn, bổ sung được booking thiếu link và booking đã đóng thông báo. Kiểm tra tổng tiền hợp lệ; cập nhật họ tên, phòng/số lượng, ngày trả và 9 cột Excel mà không phát chuông hoặc báo lại. Thư newsletter/nhắc thanh toán/yêu cầu đánh giá Booking.com được đọc một lần; mẫu booking mới lỗi vẫn thử lại. Mặc định thủ công, không chạy web ẩn. Giữ tài khoản, lịch sử, UID, âm thanh và giờ yên lặng. Đã kiểm thử thao tác lưu thật từ popup khi ẩn xuống khay, chống trùng và ba hồ sơ OTA cũ.",
-  "signature": "QkYnDj4PHnGcIt/2EYUwN5q7oOJTf6PhIxzazknfHhoO+GZsyajo275DVn3AGRwtuwFeeexWFReefe/zrQHcCA=="
+  "version": "1.7.28",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.28/Booking-Checkin-Hom-Nay-1.7.28.exe",
+  "sha256": "6429902df80fa85ce9ca1a398f61698ba7a5f9a40a53c13629aab06566aad947",
+  "size": 25080341,
+  "notes": "Booking.com chỉ báo mã đặt phòng check-in hôm nay, popup gọn với hai nút Sao chép mã và Đóng thông báo. Gỡ lấy chi tiết, nhập tay, trình duyệt, OTP và Playwright khỏi app/EXE. Sửa IMAP: phân biệt lỗi đăng nhập thật với mất kết nối, tự thử lại giữ UID; bỏ thư đã xóa khỏi danh sách thử lại; dừng socket cũ nhanh, không báo lỗi giả khi logout. Giữ tài khoản, lịch sử, âm thanh năm nguồn và giờ yên lặng. Agoda, Expedia, Traveloka, Trip giữ popup/Excel/in như cũ. Đã kiểm thử popup thật, chống trùng và OTA.",
+  "signature": "KT2JcRYHSYCJXZnB4U10QTqR6votCnBzp3rxotaBsKmlFJL1xMyJpr2wuknawUA3v4rh+Q/rgjl0ZP0+F2ghAQ=="
 }
