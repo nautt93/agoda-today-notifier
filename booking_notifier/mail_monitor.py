@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import imaplib
+import io
 import logging
 import queue
 import re
+import select
 import socket
 import ssl
+import sys
 import threading
 import time
 from contextlib import contextmanager
@@ -24,10 +27,102 @@ LOGGER = logging.getLogger(__name__)
 RECENT_MESSAGE_LIMIT = 20  # Bootstrap only; subsequent scans read every new UID.
 DETAIL_REPAIR_RETRY_SECONDS = 15 * 60
 DETAIL_REPAIR_MESSAGE_LIMIT = 3
+IMAP_IO_POLL_SECONDS = 0.1
 
 
 class ImapAuthenticationError(imaplib.IMAP4.error):
     """A rejected LOGIN, distinct from a disconnected or failed mailbox command."""
+
+
+def _wait_for_socket(sock: Any, stop_event: threading.Event, deadline: float, *, writing: bool = False) -> None:
+    while True:
+        if stop_event.is_set():
+            raise imaplib.IMAP4.abort("IMAP monitor stopped")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("IMAP socket timed out")
+        readable, writable, _ = select.select([] if writing else [sock], [sock] if writing else [], [],
+                                               min(IMAP_IO_POLL_SECONDS, remaining))
+        if readable or writable:
+            return
+
+
+class _CancellableSocketReader(io.RawIOBase):
+    """Buffer partial protocol data while polling cancellation, without short I/O timeouts."""
+
+    def __init__(self, sock: Any, stop_event: threading.Event, timeout: float):
+        self.sock = sock
+        self.stop_event = stop_event
+        self.timeout = timeout
+        self.deadline = time.monotonic() + timeout
+        super().__init__()
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        while True:
+            if self.stop_event.is_set():
+                raise imaplib.IMAP4.abort("IMAP monitor stopped")
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError("IMAP socket timed out")
+            try:
+                return self.sock.recv_into(buffer)
+            except (ssl.SSLWantReadError, BlockingIOError):
+                _wait_for_socket(self.sock, self.stop_event, self.deadline)
+            except ssl.SSLWantWriteError:
+                _wait_for_socket(self.sock, self.stop_event, self.deadline, writing=True)
+
+
+class _CancellableImapTransport:
+    """IMAP mixin: only the worker touches/closes its socket, including on Windows."""
+
+    _stop_signal: threading.Event
+
+    def open(self, host: str = "", port: int = 993, timeout: float | None = None) -> None:
+        self.host = host
+        self.port = port
+        self._io_timeout = float(timeout or 30)
+        self.sock = self._create_socket(timeout)
+        self.sock.setblocking(False)
+        self._socket_reader = _CancellableSocketReader(self.sock, self._stop_signal, self._io_timeout)
+        self.file = io.BufferedReader(self._socket_reader)
+
+    def _command(self, *args: Any):
+        # One deadline covers the command's partial writes, response lines and
+        # literal body, so polling never resets the 30-second operation timeout.
+        self._socket_reader.deadline = time.monotonic() + self._io_timeout
+        return super()._command(*args)
+
+    def send(self, data: bytes) -> None:
+        sys.audit("imaplib.send", self, data)
+        view = memoryview(data)
+        offset = 0
+        deadline = self._socket_reader.deadline
+        while offset < len(view):
+            if self._stop_signal.is_set():
+                raise imaplib.IMAP4.abort("IMAP monitor stopped")
+            if time.monotonic() >= deadline:
+                raise TimeoutError("IMAP socket timed out")
+            try:
+                sent = self.sock.send(view[offset:])
+                if not sent:
+                    raise imaplib.IMAP4.abort("IMAP socket closed during send")
+                offset += sent
+            except ssl.SSLWantReadError:
+                _wait_for_socket(self.sock, self._stop_signal, deadline)
+            except (ssl.SSLWantWriteError, BlockingIOError):
+                _wait_for_socket(self.sock, self._stop_signal, deadline, writing=True)
+
+    def __exit__(self, *args: Any):
+        try:
+            return super().__exit__(*args)
+        finally:
+            # Standard imaplib can leave the file/socket open if LOGOUT raises.
+            # This cleanup runs in the same worker that performs the socket I/O.
+            stream = getattr(self, "file", None)
+            if stream is not None and not stream.closed:
+                self.shutdown()
 
 
 def _login(client: Any, address: str, password: str) -> None:
@@ -40,12 +135,20 @@ def _login(client: Any, address: str, password: str) -> None:
 
 
 @contextmanager
-def _imap_connection(host: str, port: int, tls_context: ssl.SSLContext):
+def _imap_connection(host: str, port: int, tls_context: ssl.SSLContext, *, stop_event: threading.Event | None = None):
     """Keep LOGIN/scan results intact if the server disconnects during LOGOUT."""
     completed = False
     operation_error: BaseException | None = None
+    client_class = imaplib.IMAP4_SSL
+    if stop_event is not None and isinstance(client_class, type):
+        # Derive from the configured IMAP factory so tests/custom providers keep
+        # their standard constructor; the default remains verified IMAP4_SSL.
+        class InterruptibleImapSSL(_CancellableImapTransport, client_class):
+            _stop_signal = stop_event
+
+        client_class = InterruptibleImapSSL
     try:
-        with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
+        with client_class(host, port, ssl_context=tls_context, timeout=30) as client:
             try:
                 yield client
             except BaseException as exc:
@@ -148,20 +251,13 @@ class ImapMonitor(threading.Thread):
     def stop(self) -> None:
         self.stop_event.set()
         self.wake_event.set()
-        # A blocked FETCH otherwise holds the old worker until its 30-second timeout.
-        # Shutdown wakes its read without sending a concurrent IMAP command from the UI.
-        with self._session_lock:
-            active_socket = getattr(self._active_client, "sock", None)
-        if active_socket is not None:
-            try:
-                active_socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
+        # The worker checks this signal during protocol I/O and closes its own
+        # socket. Winsock shutdown from another thread does not reliably wake recv.
 
     @contextmanager
     def _imap_session(self, host: str, port: int, tls_context: ssl.SSLContext):
         try:
-            with _imap_connection(host, port, tls_context) as client:
+            with _imap_connection(host, port, tls_context, stop_event=self.stop_event) as client:
                 with self._session_lock:
                     self._active_client = client
                 yield client

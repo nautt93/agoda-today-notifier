@@ -3,10 +3,18 @@ from __future__ import annotations
 import imaplib
 import queue
 import socket
+import ssl
+import sys
 import threading
-from datetime import date
+import time
+import traceback
+from datetime import UTC, date, datetime
 
 import pytest
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.x509.oid import NameOID
 
 from booking_notifier import mail_monitor
 from booking_notifier.state import StateStore
@@ -16,10 +24,10 @@ CONFIG = {"imap_host": "imap.example.invalid", "email_address": "hotel@example.i
 RAW_MESSAGE = b"From: friend@example.invalid\r\nSubject: Hello\r\n\r\nHello"
 
 
-def make_monitor(tmp_path):
+def make_monitor(tmp_path, **config):
     events = queue.Queue()
     state = StateStore(tmp_path / "state.json")
-    return mail_monitor.ImapMonitor(CONFIG, "test-password", state, events), state, events
+    return mail_monitor.ImapMonitor({**CONFIG, **config}, "test-password", state, events), state, events
 
 
 def fake_session(monkeypatch, *, count=b"1", select_status="OK", search_data=b"1", login_error=None,
@@ -208,54 +216,119 @@ def test_connection_test_login_rejection_is_not_hidden_by_logout_disconnect(monk
     assert "mật khẩu ứng dụng" in mail_monitor.friendly_error(caught.value)
 
 
-def test_stop_interrupts_blocked_imap_socket_without_error_or_lost_pending_uid(tmp_path, monkeypatch):
-    monitor, state, events = make_monitor(tmp_path)
-    # Use the real IMAP transport's TCP + 30-second timeout mode. Windows'
-    # fully blocking socketpair recv has different cancellation semantics.
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        listener.listen(1)
-        client_socket = socket.create_connection(listener.getsockname(), timeout=30)
-        peer_socket, _ = listener.accept()
+@pytest.fixture
+def tls_imap_server(tmp_path):
+    """Local TLS IMAP server with a synthetic certificate and fragmented FETCH."""
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    certificate = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+                   .serial_number(x509.random_serial_number())
+                   .not_valid_before(datetime(2020, 1, 1, tzinfo=UTC))
+                   .not_valid_after(datetime(2040, 1, 1, tzinfo=UTC))
+                   .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+                   .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=False,
+                                                key_encipherment=False, data_encipherment=False,
+                                                key_agreement=False, key_cert_sign=True, crl_sign=True,
+                                                encipher_only=None, decipher_only=None), critical=True)
+                   .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+                   .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()), critical=False)
+                   .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+                   .sign(key, hashes.SHA256()))
+    cert_path, key_path = tmp_path / "synthetic-cert.pem", tmp_path / "synthetic-key.pem"
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.TraditionalOpenSSL,
+                                          serialization.NoEncryption()))
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(cert_path, key_path)
+    trusted_context = ssl.create_default_context(cafile=str(cert_path))
+    trusted_context.verify_flags |= ssl.VERIFY_X509_STRICT
     fetching = threading.Event()
+    release = threading.Event()
+    failures = []
+    commands = []
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    listener.settimeout(3)
+    threads = []
 
-    class Client:
-        sock = client_socket
+    def start(*, stalled=True, payload=RAW_MESSAGE):
+        def serve():
+            try:
+                connection, _ = listener.accept()
+                connection.settimeout(3)
+                with server_context.wrap_socket(connection, server_side=True) as secure, secure.makefile("rb") as stream:
+                    secure.sendall(b"* OK Synthetic local IMAP\r\n")
+                    while line := stream.readline():
+                        tag, command, *_ = line.split()
+                        command = command.upper()
+                        commands.append(command)
+                        if command == b"CAPABILITY":
+                            secure.sendall(b"* CAPABILITY IMAP4rev1\r\n" + tag + b" OK capabilities\r\n")
+                        elif command == b"LOGIN":
+                            secure.sendall(tag + b" OK logged in\r\n")
+                        elif command == b"EXAMINE":
+                            secure.sendall(b"* 1 EXISTS\r\n* OK [UIDVALIDITY 123] valid\r\n" + tag + b" OK [READ-ONLY] selected\r\n")
+                        elif command == b"UID" and b" SEARCH " in line.upper():
+                            secure.sendall(b"* SEARCH 1\r\n" + tag + b" OK search\r\n")
+                        elif command == b"UID" and b" FETCH " in line.upper():
+                            prefix = f"* 1 FETCH (BODY[] {{{len(payload)}}}\r\n".encode()
+                            secure.sendall(prefix + payload[:12])
+                            fetching.set()
+                            if stalled:
+                                release.wait(5)
+                                return
+                            # Pauses span several cancellation polls. They must
+                            # not become short I/O timeouts or lose literal bytes.
+                            time.sleep(0.25)
+                            secure.sendall(payload[12:30])
+                            time.sleep(0.25)
+                            secure.sendall(payload[30:] + b")\r\n" + tag + b" OK fetched\r\n")
+                        elif command == b"LOGOUT":
+                            secure.sendall(b"* BYE closing\r\n" + tag + b" OK logout\r\n")
+                            return
+                        else:
+                            raise AssertionError(f"Unexpected synthetic IMAP command {command!r}")
+            except Exception as exc:
+                failures.append(exc)
 
-        def __init__(self, *args, **kwargs):
-            pass
+        worker = threading.Thread(target=serve, daemon=True)
+        threads.append(worker)
+        worker.start()
+        return listener.getsockname()[1]
 
-        def __enter__(self):
-            return self
+    try:
+        yield start, trusted_context, fetching, release, failures, commands
+    finally:
+        release.set()
+        for worker in threads:
+            worker.join(3)
+        listener.close()
 
-        def __exit__(self, *args):
-            client_socket.close()
-            peer_socket.close()
 
-        def login(self, *args):
-            pass
+def _worker_diagnostic(monitor):
+    frame = sys._current_frames().get(monitor.ident)
+    active = monitor._active_client
+    sock = getattr(active, "sock", None)
+    metadata = {"client": type(active).__name__, "socket": type(sock).__name__,
+                "timeout": sock.gettimeout() if sock is not None else None,
+                "stop": monitor.stop_event.is_set()}
+    return f"{metadata}\n{''.join(traceback.format_stack(frame)) if frame is not None else 'worker finished'}"
 
-        def select(self, *args, **kwargs):
-            return "OK", [b"1"]
 
-        def response(self, *args):
-            return "OK", [b"123"]
+def test_stop_interrupts_blocked_imap_socket_without_error_or_lost_pending_uid(tmp_path, monkeypatch, tls_imap_server):
+    start, context, fetching, release, failures, commands = tls_imap_server
+    port = start()
+    monkeypatch.setattr(mail_monitor.ssl, "create_default_context", lambda: context)
+    monitor, state, events = make_monitor(tmp_path, imap_host="localhost", imap_port=port)
+    assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
 
-        def uid(self, command, *args):
-            if command == "search":
-                return "OK", [b"1"]
-            fetching.set()
-            if not self.sock.recv(1):
-                raise imaplib.IMAP4.abort("socket EOF")
-            raise AssertionError("The fake server must not send a response")
-
-    monkeypatch.setattr(mail_monitor.imaplib, "IMAP4_SSL", Client)
     monitor.start()
     try:
-        assert fetching.wait(2), "The worker did not reach its socket read"
+        assert fetching.wait(2), f"The worker did not reach FETCH: {failures}; {_worker_diagnostic(monitor)}"
         monitor.stop()
         monitor.join(2)
-        assert not monitor.is_alive(), "stop() did not wake the blocked IMAP socket"
+        assert not monitor.is_alive(), f"stop() did not wake the blocked IMAP socket: {_worker_diagnostic(monitor)}"
         key = f"incremental:v1:{monitor.identity_hash}:123"
         assert StateStore(state.path).mailbox_read_position(key) == (1, [1])
         assert not any(kind == "error" for kind, _ in events.queue)
@@ -263,9 +336,47 @@ def test_stop_interrupts_blocked_imap_socket_without_error_or_lost_pending_uid(t
         assert list(events.queue)[-1] == ("status", "Đã dừng theo dõi")
     finally:
         monitor.stop()
-        client_socket.close()
-        peer_socket.close()
+        release.set()
         monitor.join(2)
+
+
+@pytest.mark.parametrize("extra_bytes", [0, 32768])
+def test_fragmented_tls_fetch_survives_polling_and_preserves_complete_email(tmp_path, monkeypatch, tls_imap_server, extra_bytes):
+    start, context, fetching, _, failures, commands = tls_imap_server
+    payload = RAW_MESSAGE + b"X" * extra_bytes
+    port = start(stalled=False, payload=payload)
+    monkeypatch.setattr(mail_monitor.ssl, "create_default_context", lambda: context)
+    monitor, state, events = make_monitor(tmp_path, imap_host="localhost", imap_port=port)
+    assert monitor.scan_mailbox() == 1
+    assert fetching.is_set() and failures == []
+    key = f"incremental:v1:{monitor.identity_hash}:123"
+    assert StateStore(state.path).mailbox_read_position(key) == (1, [])
+    expected_key = mail_monitor.mailbox_message_key(monitor.identity_hash, mail_monitor.hashlib.sha256(payload).hexdigest())
+    assert state.is_processed(expected_key), "Fragmented literal did not match the original complete email"
+    assert not state.data["parse_failures"] and not any(kind == "error" for kind, _ in events.queue)
+    assert commands[-1] == b"LOGOUT" and monitor._active_client is None
+
+
+def test_partial_tls_literal_expires_at_command_deadline_and_keeps_uid_pending(tmp_path, monkeypatch, tls_imap_server):
+    start, context, fetching, _, _, _ = tls_imap_server
+    port = start()
+    monkeypatch.setattr(mail_monitor.ssl, "create_default_context", lambda: context)
+    command = mail_monitor._CancellableImapTransport._command
+
+    def short_test_deadline(client, name, *args):
+        if name == "UID" and args and args[0] == "FETCH":
+            client._io_timeout = 0.2
+        return command(client, name, *args)
+
+    monkeypatch.setattr(mail_monitor._CancellableImapTransport, "_command", short_test_deadline)
+    monitor, state, events = make_monitor(tmp_path, imap_host="localhost", imap_port=port)
+    with pytest.raises(TimeoutError, match="IMAP socket timed out"):
+        monitor.scan_mailbox()
+    assert fetching.is_set()
+    key = f"incremental:v1:{monitor.identity_hash}:123"
+    assert StateStore(state.path).mailbox_read_position(key) == (1, [1])
+    assert not state.data["parse_failures"] and not any(kind == "alert" for kind, _ in events.queue)
+    assert monitor._active_client is None
 
 
 def test_stopped_monitor_never_opens_another_connection(tmp_path, monkeypatch):

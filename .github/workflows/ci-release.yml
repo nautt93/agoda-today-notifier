@@ -21,6 +21,8 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-build.txt
       - run: python -m ruff check .
+      - name: Verify IMAP stop and retained unread emails on Windows
+        run: python -m pytest -q tests/test_imap_resilience.py::test_stop_interrupts_blocked_imap_socket_without_error_or_lost_pending_uid
       - run: python -m pytest -q
         env:
           BOOKING_UI_SCREENSHOT_DIR: ${{ runner.temp }}/booking-popup-previews
