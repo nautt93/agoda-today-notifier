@@ -39,6 +39,30 @@ def _login(client: Any, address: str, password: str) -> None:
         raise ImapAuthenticationError("IMAP LOGIN rejected") from exc
 
 
+@contextmanager
+def _imap_connection(host: str, port: int, tls_context: ssl.SSLContext):
+    """Keep LOGIN/scan results intact if the server disconnects during LOGOUT."""
+    completed = False
+    operation_error: BaseException | None = None
+    try:
+        with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
+            try:
+                yield client
+            except BaseException as exc:
+                operation_error = exc
+                raise
+            completed = True
+    except (imaplib.IMAP4.error, OSError):
+        if operation_error is not None:
+            # A LOGOUT error must not obscure a genuine rejected LOGIN.
+            raise operation_error from None
+        if not completed:
+            raise
+        # Both scanning and "Kiểm tra IMAP" completed before LOGOUT. The server
+        # closing during cleanup does not undo those successful operations.
+        LOGGER.debug("IMAP connection closed during logout after completed operation")
+
+
 def _selected_mailbox_count(status: str, counts: Any) -> int:
     if status != "OK":
         raise RuntimeError("Không mở được Inbox; app sẽ thử kết nối lại.")
@@ -136,27 +160,11 @@ class ImapMonitor(threading.Thread):
 
     @contextmanager
     def _imap_session(self, host: str, port: int, tls_context: ssl.SSLContext):
-        completed = False
-        scan_error: BaseException | None = None
         try:
-            with imaplib.IMAP4_SSL(host, port, ssl_context=tls_context, timeout=30) as client:
+            with _imap_connection(host, port, tls_context) as client:
                 with self._session_lock:
                     self._active_client = client
-                try:
-                    yield client
-                except BaseException as exc:
-                    scan_error = exc
-                    raise
-                completed = True
-        except (imaplib.IMAP4.error, OSError):
-            if scan_error is not None:
-                # A LOGOUT error must not obscure a genuine rejected LOGIN.
-                raise scan_error from None
-            if not completed:
-                raise
-            # Results and UID checkpoints were saved before LOGOUT. A connection
-            # closing during cleanup must not turn a successful scan into a login error.
-            LOGGER.debug("IMAP connection closed during logout after completed scan")
+                yield client
         finally:
             with self._session_lock:
                 self._active_client = None
@@ -442,11 +450,10 @@ class ImapMonitor(threading.Thread):
 
 def test_imap_connection(config: dict[str, Any], password: str) -> None:
     context = ssl.create_default_context()
-    with imaplib.IMAP4_SSL(
+    with _imap_connection(
         str(config["imap_host"]).strip(),
         int(config.get("imap_port", 993)),
-        ssl_context=context,
-        timeout=30,
+        context,
     ) as client:
         _login(client, str(config["email_address"]).strip(), password)
         status, counts = client.select("INBOX", readonly=True)

@@ -195,6 +195,19 @@ def test_logout_disconnect_keeps_real_login_rejection_classification(tmp_path, m
     assert monitor._active_client is None
 
 
+def test_connection_test_success_is_not_undone_by_logout_disconnect(monkeypatch):
+    fake_session(monkeypatch, logout_error=imaplib.IMAP4.abort("EOF during LOGOUT"))
+    assert mail_monitor.test_imap_connection(CONFIG, "test-password") is None
+
+
+def test_connection_test_login_rejection_is_not_hidden_by_logout_disconnect(monkeypatch):
+    fake_session(monkeypatch, login_error=imaplib.IMAP4.error("AUTHENTICATIONFAILED"),
+                 logout_error=imaplib.IMAP4.abort("EOF during LOGOUT"))
+    with pytest.raises(mail_monitor.ImapAuthenticationError) as caught:
+        mail_monitor.test_imap_connection(CONFIG, "test-password")
+    assert "mật khẩu ứng dụng" in mail_monitor.friendly_error(caught.value)
+
+
 def test_stop_interrupts_blocked_imap_socket_without_error_or_lost_pending_uid(tmp_path, monkeypatch):
     monitor, state, events = make_monitor(tmp_path)
     client_socket, peer_socket = socket.socketpair()
