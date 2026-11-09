@@ -12,12 +12,13 @@ import ssl
 import sys
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import date, datetime
 from email import message_from_bytes, policy
 from typing import Any
 
 from .booking_com import is_booking_com_nonbooking_notice
+from .config import normalize_poll_seconds
 from .models import BOOKING_STATUS_NEW
 from .parsing import is_traveloka_payment_notice, is_trusted_booking_sender, parse_booking_message
 from .quiet_hours import normalize_quiet_times, quiet_hours_active
@@ -28,6 +29,10 @@ RECENT_MESSAGE_LIMIT = 20  # Bootstrap only; subsequent scans read every new UID
 DETAIL_REPAIR_RETRY_SECONDS = 15 * 60
 DETAIL_REPAIR_MESSAGE_LIMIT = 3
 IMAP_IO_POLL_SECONDS = 0.1
+PENDING_READ_RETRY_SECONDS = 60
+IMAP_RECONNECT_SECONDS = 5
+IMAP_MAX_RECONNECT_SECONDS = 30
+IMAP_AUTH_RETRY_SECONDS = 60
 
 
 class ImapAuthenticationError(imaplib.IMAP4.error):
@@ -114,12 +119,13 @@ class _CancellableImapTransport:
             except (ssl.SSLWantWriteError, BlockingIOError):
                 _wait_for_socket(self.sock, self._stop_signal, deadline, writing=True)
 
-    def __exit__(self, *args: Any):
+    def __exit__(self, exc_type: Any, exc: Any, traceback: Any):
         try:
-            return super().__exit__(*args)
+            if exc_type is None and not self._stop_signal.is_set():
+                return super().__exit__(exc_type, exc, traceback)
         finally:
-            # Standard imaplib can leave the file/socket open if LOGOUT raises.
-            # This cleanup runs in the same worker that performs the socket I/O.
+            # An interrupted command may still have an unfinished response.
+            # Close it without waiting for another round trip on a broken session.
             stream = getattr(self, "file", None)
             if stream is not None and not stream.closed:
                 self.shutdown()
@@ -243,6 +249,7 @@ class ImapMonitor(threading.Thread):
         self.wake_event = threading.Event()
         self.repair_requested = threading.Event()
         self.detail_repair_attempts: dict[str, float] = {}
+        self.pending_read_retry_at: dict[tuple[str, int], float] = {}
         self._session_lock = threading.Lock()
         self._active_client: Any = None
         identity = f"{self.config.get('imap_host', '')}|{self.config.get('email_address', '')}|INBOX".lower()
@@ -279,47 +286,69 @@ class ImapMonitor(threading.Thread):
     def emit(self, event_type: str, payload: Any) -> None:
         self.event_queue.put((event_type, payload))
 
+    @contextmanager
+    def _authenticated_session(self):
+        host = str(self.config["imap_host"]).strip()
+        port = int(self.config.get("imap_port", 993))
+        address = str(self.config["email_address"]).strip()
+        with self._imap_session(host, port, ssl.create_default_context()) as client:
+            if not self.stop_event.is_set():
+                _login(client, address, self.password)
+            yield client
+
     def run(self) -> None:
         self.emit("status", "Đang theo dõi 5 nguồn booking")
+        interval = normalize_poll_seconds(self.config.get("poll_seconds"))
+        self.emit("log", f"Kiểm tra thư mới mỗi {interval} giây; chỉ báo booking có check-in hôm nay.")
+        reconnect_delay = IMAP_RECONNECT_SECONDS
         while not self.stop_event.is_set():
+            self.wake_event.clear()
+            if self.stop_event.is_set():
+                break
             try:
-                processed = self.scan_mailbox()
-                if processed:
-                    self.emit("log", f"Đã đọc {processed} email mới.")
-                self.emit("status", "Đang theo dõi 5 nguồn booking")
+                # Keep the verified connection between incremental scans. A
+                # short polling interval does not mean repeated TLS/LOGIN.
+                with self._authenticated_session() as client:
+                    while not self.stop_event.is_set():
+                        self.wake_event.clear()
+                        next_scan_at = time.monotonic() + interval
+                        self.scan_mailbox(client=client, next_scan_at=next_scan_at)
+                        if self.stop_event.is_set():
+                            break
+                        reconnect_delay = IMAP_RECONNECT_SECONDS
+                        self.emit("status", "Đang theo dõi 5 nguồn booking")
+                        self.wake_event.wait(max(0, next_scan_at - time.monotonic()))
             except Exception as exc:
                 if self.stop_event.is_set():
                     break
                 LOGGER.exception("IMAP scan failed")
                 self.emit("error", friendly_error(exc))
-            delay = min(3600, max(30, int(self.config.get("poll_seconds", 60))))
-            self.wake_event.wait(delay)
-            self.wake_event.clear()
+                delay = IMAP_AUTH_RETRY_SECONDS if isinstance(exc, ImapAuthenticationError) else reconnect_delay
+                self.wake_event.wait(delay)
+                reconnect_delay = min(reconnect_delay * 2, IMAP_MAX_RECONNECT_SECONDS)
         self.emit("status", "Đã dừng theo dõi")
 
-    def scan_mailbox(self) -> int:
+    def scan_mailbox(self, *, client: Any = None, next_scan_at: float | None = None) -> int:
         if self.stop_event.is_set():
             return 0
-        host = str(self.config["imap_host"]).strip()
-        port = int(self.config.get("imap_port", 993))
-        address = str(self.config["email_address"]).strip()
-        tls_context = ssl.create_default_context()
         processed_count = 0
         failed_count = 0
         today_count = 0
         other_day_count = 0
         self.emit("status", "Đang kiểm tra email booking mới nhất…")
         if self.repair_requested.is_set():
-            self.detail_repair_attempts.clear()
             self.repair_requested.clear()
+            self.detail_repair_attempts.clear()
+            self.pending_read_retry_at.clear()
+        now = time.monotonic()
+        self.pending_read_retry_at = {key: retry_at for key, retry_at in self.pending_read_retry_at.items() if retry_at > now}
         # Snapshot BEFORE new mail: do not immediately fetch a new email twice.
         incomplete = [record for record in self.state.incomplete_confirmations(date.today())
                       if str(record.get("source", "")).lower() != "booking.com"]
         read_uids: set[int] = set()
-        with self._imap_session(host, port, tls_context) as client:
+        with (self._authenticated_session() if client is None else nullcontext(client)) as client:
             if self.stop_event.is_set():
                 return 0
-            _login(client, address, self.password)
             status, counts = client.select("INBOX", readonly=True)
             count = _selected_mailbox_count(status, counts)
             uid_validity = ""
@@ -349,7 +378,8 @@ class ImapMonitor(threading.Thread):
             found = _search_uids(status, data, "Không tìm được email trong Inbox; app sẽ thử lại.")
             # IMAP n:* also matches the last UID when n is greater than that UID.
             uids = found[-RECENT_MESSAGE_LIMIT:] if position is None else [uid for uid in found if uid > position[0]]
-            new_count = len(uids)
+            fresh_uids = set(uids)
+            new_count = len(fresh_uids)
             if refresh_details:
                 status, recent_data = client.uid("search", None, *recent_criteria)
                 recent_uids = _search_uids(status, recent_data,
@@ -361,12 +391,17 @@ class ImapMonitor(threading.Thread):
             pending = self.state.stage_mailbox_reads(
                 mailbox_key, work, minimum_cursor=position[0] if position else 0, parser_version=PARSER_STATE_VERSION,
             )
+            # New UIDs always go first, even if a prior scan was interrupted.
+            pending = [uid for uid in pending if (mailbox_key, uid) not in self.pending_read_retry_at]
+            pending.sort(key=lambda uid: (uid in fresh_uids, uid), reverse=True)
             if position is None:
                 self.emit("log", f"Lần đầu: kiểm tra {len(uids)} thư gần nhất (tối đa {RECENT_MESSAGE_LIMIT}).")
-            else:
+            elif pending:
                 self.emit("log", f"Có {new_count} thư mới; {len(pending) - new_count} thư cần đọc lại/bổ sung dữ liệu.")
-            for uid_number in pending:
-                if self.stop_event.is_set():
+            for index, uid_number in enumerate(pending):
+                # Finish at least one message even if connecting/searching was
+                # slow. Stage all others so the next cycle can pick them back up.
+                if self.stop_event.is_set() or (index and next_scan_at is not None and time.monotonic() >= next_scan_at):
                     break
                 uid_raw = str(uid_number).encode("ascii")
                 uid = uid_raw.decode("ascii", errors="ignore")
@@ -374,6 +409,10 @@ class ImapMonitor(threading.Thread):
                 if self.state.is_processed(uid_key):
                     self.state.finish_mailbox_read(mailbox_key, uid_number)
                     continue
+                if next_scan_at is not None:
+                    # A timed-out or unparseable UID stays on disk, but it
+                    # cannot stall every subsequent fast scan of the Inbox.
+                    self.pending_read_retry_at[(mailbox_key, uid_number)] = time.monotonic() + PENDING_READ_RETRY_SECONDS
                 try:
                     # Direct body fetch matches 1.5.5 and avoids a second round-trip/header gate.
                     read_uids.add(uid_number)
@@ -472,27 +511,28 @@ class ImapMonitor(threading.Thread):
                     self.emit("log", f"{event.source} {event.booking_id or '(không có mã)'}: đã ghi nhận; không báo lặp.")
                     continue
                 today_count += 1
-                self.emit("log", f"BÁO NGAY {alert.source} {alert.booking_id or '(không có mã)'}: check-in {today.isoformat()}.")
                 if quiet_hours_active(self.config):
                     self.emit("deferred_alert", alert)
                 else:
+                    self.emit("log", f"BÁO NGAY {alert.source} {alert.booking_id or '(không có mã)'}: check-in {today.isoformat()}.")
                     self.emit("alert", alert)
                 self.emit("history_changed", None)
-            self._recover_incomplete_details(client, incomplete, read_uids)
+            self._recover_incomplete_details(client, incomplete, read_uids, next_scan_at=next_scan_at)
         if processed_count:
             self.emit("history_changed", None)
-        self.emit("log", f"Quét xong: {processed_count} thư mới; {today_count} booking hôm nay được ghi nhận; "
-                  f"{other_day_count} booking ngày khác bỏ qua; {failed_count} thư đọc lỗi.")
+        if processed_count or failed_count:
+            self.emit("log", f"Quét xong: {processed_count} thư mới; {today_count} booking hôm nay được ghi nhận; "
+                      f"{other_day_count} booking ngày khác bỏ qua; {failed_count} thư đọc lỗi.")
         return processed_count
 
     def _recover_incomplete_details(
-        self, client: Any, candidates: list[dict[str, Any]], read_uids: set[int],
+        self, client: Any, candidates: list[dict[str, Any]], read_uids: set[int], *, next_scan_at: float | None = None,
     ) -> None:
         """Repair known cached rows outside the recent window; never queue an alert."""
         today = date.today()
         remaining = {StateStore._record_storage_id(record) for record in self.state.incomplete_confirmations(today)}
         for record in candidates:
-            if self.stop_event.is_set():
+            if self.stop_event.is_set() or (next_scan_at is not None and time.monotonic() >= next_scan_at):
                 break
             storage_id = StateStore._record_storage_id(record)
             booking_id = str(record.get("booking_id", ""))
@@ -516,9 +556,14 @@ class ImapMonitor(threading.Thread):
                     continue
                 matches = sorted({int(uid) for uid in data[0].split()}, reverse=True)[:DETAIL_REPAIR_MESSAGE_LIMIT]
                 changed = False
+                paused = False
                 for uid in matches:
                     if uid in read_uids or self.stop_event.is_set():
                         continue
+                    if next_scan_at is not None and time.monotonic() >= next_scan_at:
+                        self.detail_repair_attempts.pop(retry_key, None)
+                        paused = True
+                        break
                     status, payload = client.uid("fetch", str(uid).encode("ascii"), "(BODY.PEEK[])")
                     raw = _response_bytes(payload) if status == "OK" else None
                     if not raw:
@@ -535,7 +580,7 @@ class ImapMonitor(threading.Thread):
                 if changed:
                     self.emit("history_changed", None)
                     self.emit("log", f"Đã bổ sung họ tên/hạng phòng từ email gốc của {source} {booking_id}; không báo lặp.")
-                else:
+                elif not paused:
                     self.emit("log", f"{source} {booking_id}: chưa bổ sung được dữ liệu; cần kiểm tra email gốc.")
             except (imaplib.IMAP4.abort, OSError):
                 raise

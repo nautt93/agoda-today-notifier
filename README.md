@@ -51,6 +51,12 @@
 
 ## Cài đặt
 
+### Quét email nhanh — từ v1.7.29
+
+Ứng dụng kiểm tra thư mới trong Inbox mỗi **15 giây** theo mặc định, dùng lại kết nối IMAP đang hoạt động. Trong **Cài đặt → Cấu hình → Kết nối email** có thể chọn từ 10 đến 30 giây. Giá trị cũ trên 30 giây tự chuyển về 15 giây khi cập nhật.
+
+Thư mới được ưu tiên trước thư cần đọc lại. App giữ các thư chưa xử lý để thử lại, tự nối lại khi mất kết nối, và nhường lượt quét tiếp theo khi việc bổ sung tên/phòng kéo dài. Mốc 15 phút của việc bổ sung dữ liệu cũ không phải là thời gian chờ báo thư mới. Nhật ký cho biết khi một booking đã được nhận nhưng đang chờ đóng popup trước đó. Vẫn chỉ báo booking mới có check-in hôm nay và áp dụng giờ yên lặng.
+
 ### Thời gian yên lặng — từ v1.7.24
 
 Vào **Cài đặt → Cấu hình → Thời gian yên lặng**, bật **Bật thời gian yên lặng**, chọn giờ/phút **Từ** và **Đến**, rồi bấm **Lưu thời gian**. Nút này chỉ lưu lịch yên lặng, không yêu cầu nhập lại tài khoản, không khởi động lại kết nối email hoặc trình duyệt. **Lưu & khởi động** cũng lưu cùng khung giờ. Thay đổi chưa lưu không ảnh hưởng thông báo đang chạy; bỏ chọn rồi lưu để tắt lịch yên lặng.

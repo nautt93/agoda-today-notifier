@@ -9,12 +9,15 @@ from typing import Any
 from .quiet_hours import normalize_quiet_times
 
 APP_NAME = "Booking Check-in Hôm nay"
-APP_VERSION = "1.7.28"
+APP_VERSION = "1.7.29"
 APP_DIR = Path(os.environ.get("APPDATA") or Path.home()) / "AgodaTodayNotifier"
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.json"
 LOG_PATH = APP_DIR / "app.log"
 PUBLIC_UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/nautt93/agoda-today-notifier/main/update.json"
+DEFAULT_POLL_SECONDS = 15
+MIN_POLL_SECONDS = 10
+MAX_POLL_SECONDS = 30
 
 PROVIDERS: dict[str, tuple[str, int]] = {
     "Gmail": ("imap.gmail.com", 993),
@@ -29,7 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "imap_port": 993,
     "email_address": "",
     "password_encrypted": "",
-    "poll_seconds": 60,
+    "poll_seconds": DEFAULT_POLL_SECONDS,
     "scan_days": 90,
     "sound_file": "",
     "agoda_sound_file": "",
@@ -61,6 +64,12 @@ def _integer_or_default(value: Any, default: int) -> int:
         return int(value)
     except (ValueError, TypeError, OverflowError):
         return default
+
+
+def normalize_poll_seconds(value: Any) -> int:
+    interval = _integer_or_default(value, DEFAULT_POLL_SECONDS)
+    # Upgrade the old 60-second default and legacy intervals of up to an hour.
+    return DEFAULT_POLL_SECONDS if interval > MAX_POLL_SECONDS else max(MIN_POLL_SECONDS, interval)
 
 
 def atomic_json_write(path: Path, value: Any) -> None:
@@ -96,7 +105,7 @@ class ConfigStore:
         source = str(config.get("update_manifest_source", ""))
         if source == "https://raw.githubusercontent.com/xamtro/agoda-today-notifier/main/update.json":
             config["update_manifest_source"] = PUBLIC_UPDATE_MANIFEST_URL
-        config["poll_seconds"] = min(3600, max(30, _integer_or_default(config.get("poll_seconds"), 60)))
+        config["poll_seconds"] = normalize_poll_seconds(config["poll_seconds"])
         config["scan_days"] = min(365, max(1, _integer_or_default(config.get("scan_days"), 90)))
         port = _integer_or_default(config.get("imap_port"), DEFAULT_CONFIG["imap_port"])
         config["imap_port"] = port if 1 <= port <= 65535 else DEFAULT_CONFIG["imap_port"]
@@ -114,6 +123,7 @@ class ConfigStore:
     def save(self, config: dict[str, Any]) -> None:
         value = dict(DEFAULT_CONFIG)
         value.update({key: item for key, item in config.items() if key in DEFAULT_CONFIG})
+        value["poll_seconds"] = normalize_poll_seconds(value["poll_seconds"])
         # Validate before creating/replacing any file, even when quiet hours
         # are disabled, so an invalid draft cannot overwrite working settings.
         value["quiet_start_time"], value["quiet_end_time"] = normalize_quiet_times(

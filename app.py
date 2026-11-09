@@ -26,6 +26,8 @@ from booking_notifier.config import (
     APP_NAME,
     APP_VERSION,
     LOG_PATH,
+    MAX_POLL_SECONDS,
+    MIN_POLL_SECONDS,
     PROVIDERS,
     ConfigStore,
 )
@@ -514,7 +516,7 @@ class BookingNotifierApp:
         self._add_setting_field(connection, "Máy chủ IMAP", self.host_var, "entry", 1, 0)
         self._add_setting_field(connection, "Cổng IMAP", self.port_var, "entry", 1, 1)
         self._add_setting_field(connection, "Mật khẩu ứng dụng", self.password_var, "password", 2, 0, 2)
-        self._add_setting_field(connection, "Quét mỗi (giây)", self.poll_var, "entry", 3, 0)
+        self._add_setting_field(connection, f"Quét mỗi ({MIN_POLL_SECONDS}–{MAX_POLL_SECONDS} giây)", self.poll_var, "entry", 3, 0)
         self._add_setting_field(connection, "Tìm email trong (ngày)", self.scan_days_var, "entry", 3, 1)
 
         preferences = ttk.LabelFrame(
@@ -695,13 +697,16 @@ class BookingNotifierApp:
 
     def _collect_config(self) -> dict[str, Any]:
         password = self.password_var.get()
+        poll_seconds = int(self.poll_var.get())
+        if not MIN_POLL_SECONDS <= poll_seconds <= MAX_POLL_SECONDS:
+            raise ValueError(f"Thời gian quét email phải từ {MIN_POLL_SECONDS} đến {MAX_POLL_SECONDS} giây.")
         return {
             "provider": self.provider_var.get(),
             "imap_host": self.host_var.get().strip(),
             "imap_port": int(self.port_var.get()),
             "email_address": self.email_var.get().strip(),
             "password_encrypted": protect_secret(password),
-            "poll_seconds": min(3600, max(30, int(self.poll_var.get()))),
+            "poll_seconds": poll_seconds,
             "scan_days": min(365, max(1, int(self.scan_days_var.get()))),
             "sound_file": self.sound_var.get().strip(),
             "source_sound_pack": str(self.config.get("source_sound_pack", "")),
@@ -1113,6 +1118,8 @@ class BookingNotifierApp:
             return
         self.queued_ids.add(alert.storage_id)
         self.alert_queue.append(alert)
+        if self.active_alert:
+            self.log(f"Đã nhận {alert.source} {alert.booking_id}; sẽ mở popup khi đóng thông báo hiện tại.")
         if not self.active_alert:
             try:
                 self._show_next_alert()

@@ -95,13 +95,24 @@ class StateStore:
         A crash, stopped monitor, or failed parse leaves unfinished UIDs recoverable.
         """
         with self.lock:
-            record = self.data["mailbox_reads"].setdefault(mailbox_key, {"cursor": 0, "pending_uids": []})
+            reads = self.data["mailbox_reads"]
+            previous = reads.get(mailbox_key)
+            record = previous if previous is not None else {"cursor": 0, "pending_uids": []}
             pending = set(record["pending_uids"]) | set(uids)
-            record["cursor"] = max(int(record["cursor"]), minimum_cursor, max(uids, default=0))
-            record["pending_uids"] = sorted(pending)
+            updated = {**record, "cursor": max(int(record["cursor"]), minimum_cursor, max(uids, default=0)),
+                       "pending_uids": sorted(pending)}
             if parser_version:
-                record["parser_version"] = parser_version
-            self._save_locked()
+                updated["parser_version"] = parser_version
+            if previous != updated:
+                reads[mailbox_key] = updated
+                try:
+                    self._save_locked()
+                except OSError:
+                    if previous is None:
+                        del reads[mailbox_key]
+                    else:
+                        reads[mailbox_key] = previous
+                    raise
             return sorted(pending, reverse=True)
 
     def finish_mailbox_read(self, mailbox_key: str, uid: int) -> None:

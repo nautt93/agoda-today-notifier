@@ -254,9 +254,10 @@ def tls_imap_server(tmp_path):
     listener.settimeout(3)
     threads = []
 
-    def start(*, stalled=True, payload=RAW_MESSAGE):
+    def start(*, stalled=True, payload=RAW_MESSAGE, arrives_after_first_search=False):
         def serve():
             try:
+                search_count = 0
                 connection, _ = listener.accept()
                 connection.settimeout(3)
                 with server_context.wrap_socket(connection, server_side=True) as secure, secure.makefile("rb") as stream:
@@ -270,9 +271,12 @@ def tls_imap_server(tmp_path):
                         elif command == b"LOGIN":
                             secure.sendall(tag + b" OK logged in\r\n")
                         elif command == b"EXAMINE":
-                            secure.sendall(b"* 1 EXISTS\r\n* OK [UIDVALIDITY 123] valid\r\n" + tag + b" OK [READ-ONLY] selected\r\n")
+                            count = b"0" if arrives_after_first_search and search_count == 0 else b"1"
+                            secure.sendall(b"* " + count + b" EXISTS\r\n* OK [UIDVALIDITY 123] valid\r\n" + tag + b" OK [READ-ONLY] selected\r\n")
                         elif command == b"UID" and b" SEARCH " in line.upper():
-                            secure.sendall(b"* SEARCH 1\r\n" + tag + b" OK search\r\n")
+                            search_count += 1
+                            result = b"" if arrives_after_first_search and search_count == 1 else b" 1"
+                            secure.sendall(b"* SEARCH" + result + b"\r\n" + tag + b" OK search\r\n")
                         elif command == b"UID" and b" FETCH " in line.upper():
                             prefix = f"* 1 FETCH (BODY[] {{{len(payload)}}}\r\n".encode()
                             secure.sendall(prefix + payload[:12])
@@ -316,6 +320,32 @@ def _worker_diagnostic(monitor):
                 "timeout": sock.gettimeout() if sock is not None else None,
                 "stop": monitor.stop_event.is_set()}
     return f"{metadata}\n{''.join(traceback.format_stack(frame)) if frame is not None else 'worker finished'}"
+
+
+def test_worker_picks_up_mail_after_initial_empty_search_on_same_tls_session(tmp_path, monkeypatch, tls_imap_server):
+    start, context, _, _, failures, commands = tls_imap_server
+    mail = ("From: booking@agoda.com\r\nSubject: Agoda Booking ID 987654321 - CONFIRMED\r\n\r\n"
+            f"Booking ID: 987654321\r\nCheck-in: {date.today().isoformat()}\r\n"
+            "Guest Name: Synthetic Guest\r\nRoom Type: Standard Room\r\nRooms: 1\r\n").encode("ascii")
+    port = start(stalled=False, payload=mail, arrives_after_first_search=True)
+    monkeypatch.setattr(mail_monitor.ssl, "create_default_context", lambda: context)
+    monkeypatch.setattr(mail_monitor, "normalize_poll_seconds", lambda _seconds: 0.2)
+    monitor, state, events = make_monitor(tmp_path, imap_host="127.0.0.1", imap_port=port)
+    monitor.start()
+    try:
+        deadline = time.monotonic() + 5
+        while True:
+            kind, value = events.get(timeout=max(0.001, deadline - time.monotonic()))
+            assert kind != "error", value
+            if kind == "alert":
+                assert (value.source, value.booking_id) == ("Agoda", "987654321")
+                break
+    finally:
+        monitor.stop()
+        monitor.join(2)
+    assert not monitor.is_alive(), _worker_diagnostic(monitor)
+    assert not failures and commands.count(b"LOGIN") == 1 and commands.count(b"EXAMINE") >= 2
+    assert len(StateStore(state.path).pending_for_date(date.today())) == 1
 
 
 def test_stop_interrupts_blocked_imap_socket_without_error_or_lost_pending_uid(tmp_path, monkeypatch, tls_imap_server):

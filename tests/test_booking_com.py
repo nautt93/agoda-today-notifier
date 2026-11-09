@@ -173,7 +173,7 @@ def test_configuration_upgrade_removes_advanced_booking_options_preserves_creden
     store = ConfigStore(tmp_path / "config.json")
     profile = {"email_address": "hotel@example.invalid", "password_encrypted": "synthetic-preserved-secret",
                "booking_com_browser": "chrome", "booking_com_enrichment": True, "booking_com_enrichment_mode": "visible",
-               "booking_com_sound_file": "custom-booking.mp3", "agoda_sound_file": "custom-agoda.wav", "poll_seconds": 90,
+               "booking_com_sound_file": "custom-booking.mp3", "agoda_sound_file": "custom-agoda.wav", "poll_seconds": 25,
                "quiet_hours_enabled": True, "quiet_start_time": "22:15", "quiet_end_time": "06:45"}
     atomic_json_write(store.path, profile)
     original = store.path.read_bytes()
@@ -196,15 +196,15 @@ def test_malformed_legacy_imap_numbers_cannot_block_startup_or_erase_credentials
     atomic_json_write(store.path, profile)
     previous = store.path.read_bytes()
     loaded = store.load()
-    assert (loaded["imap_port"], loaded["poll_seconds"], loaded["scan_days"]) == (993, 60, 90)
+    assert (loaded["imap_port"], loaded["poll_seconds"], loaded["scan_days"]) == (993, 15, 90)
     assert all(loaded[key] == profile[key] for key in ("imap_host", "email_address", "password_encrypted", "booking_com_sound_file"))
     assert store.path.read_bytes() == previous
 
 
 @pytest.mark.parametrize(("port", "poll", "days", "expected"), [
-    ("1993", "90", "30", (1993, 90, 30)),
-    ("0", "0", "0", (993, 30, 1)),
-    (70000, 9000, 9999, (993, 3600, 365)),
+    ("1993", "25", "30", (1993, 25, 30)),
+    ("0", "0", "0", (993, 10, 1)),
+    (70000, 9000, 9999, (993, 15, 365)),
 ])
 def test_valid_legacy_numeric_strings_and_bounds(port, poll, days, expected, tmp_path):
     store = ConfigStore(tmp_path / "config.json")

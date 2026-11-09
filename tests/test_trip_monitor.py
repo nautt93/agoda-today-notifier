@@ -7,8 +7,10 @@ from datetime import date, timedelta
 from email import message_from_bytes, policy
 from email.message import EmailMessage
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from test_mail_monitor import recent_message
 
 from booking_notifier import mail_monitor
 from booking_notifier.excel_export import excel_amount_value, excel_tsv
@@ -195,6 +197,67 @@ def test_trip_latest_twenty_bootstrap_then_new_uids_only(tmp_path, monkeypatch):
     monitor, state, _ = monitor_for(tmp_path, StateStore(state.path), events)
     assert monitor.scan_mailbox() == 1 and fetched == [2001]
     assert searches[-1] == ("UID", "2001:*") and len(state.pending_for_date(date.today())) == 2
+
+
+@pytest.mark.parametrize("fetch_timed_out", [False, True])
+@pytest.mark.parametrize("source", ["Trip", "Agoda", "Expedia"])
+def test_fast_scan_alerts_before_old_retries_and_reuses_healthy_session(tmp_path, monkeypatch, fetch_timed_out, source):
+    use_fixture_date(monkeypatch)
+    clock = 0.0
+    monkeypatch.setattr(mail_monitor, "time", SimpleNamespace(monotonic=lambda: clock))
+    monitor, state, events = monitor_for(tmp_path)
+    monitor.config["poll_seconds"] = 900  # A slow setting saved by an older version.
+    mailbox_key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(mailbox_key, [7, 8], minimum_cursor=10, parser_version=mail_monitor.PARSER_STATE_VERSION)
+    malformed = b"From: auto_reservation@trip.com\r\nSubject: Unknown notice\r\n\r\nNo booking fields."
+    messages = {7: b"From: other@example.invalid\r\nSubject: Older mail\r\n\r\nHello", 8: malformed}
+    fake_inbox(monkeypatch, messages)
+    base = mail_monitor.imaplib.IMAP4_SSL
+    fetches, logins, waits = [], [], []
+
+    class Client(base):
+        def login(self, *args):
+            logins.append(clock)
+
+        def uid(self, command, *args):
+            nonlocal clock
+            if command == "fetch":
+                uid = int(args[0])
+                fetches.append(uid)
+                if uid == 8:
+                    clock += 30 if fetch_timed_out else 18
+                    if fetch_timed_out:
+                        raise TimeoutError("Synthetic stalled FETCH")
+                elif uid == 7:
+                    assert [event.booking_id for event in alerts(events)] == [IDENTIFIER]
+                    clock += 5
+            return super().uid(command, *args)
+
+    def wait(delay):
+        nonlocal clock
+        waits.append(delay)
+        if len(waits) == 1:
+            assert StateStore(state.path).mailbox_read_position(mailbox_key) == (10, [7, 8])
+            if source == "Trip":
+                fresh = fixture_email("original")
+                fresh.replace_header("From", "auto_reservation@trip.com")
+                fresh.replace_header("Subject", f"Action required - New booking received (booking no. #{IDENTIFIER}#)")
+                messages[11] = fresh.as_bytes()
+            else:
+                messages[11] = recent_message(source, ARRIVAL.isoformat(), IDENTIFIER)
+            clock += delay
+        else:
+            monitor.stop()
+
+    monkeypatch.setattr(mail_monitor.imaplib, "IMAP4_SSL", Client)
+    monkeypatch.setattr(monitor.wake_event, "wait", wait)
+    monitor.run()
+
+    assert fetches == [8, 11, 7]
+    assert waits == [5 if fetch_timed_out else 0, 10]
+    assert logins == ([0, 35] if fetch_timed_out else [0])
+    assert [(event.source, event.checkin_date) for event in alerts(events)] == [(source, ARRIVAL)]
+    assert StateStore(state.path).mailbox_read_position(mailbox_key) == (11, [8])
 
 
 def test_trip_only_new_arriving_today_alerts_not_modified_cancelled_other_days_or_spoofed_sender(tmp_path, monkeypatch):

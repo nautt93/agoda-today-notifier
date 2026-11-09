@@ -101,7 +101,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Booking.com chỉ báo mã đặt phòng check-in hôm nay, popup gọn với hai nút Sao chép mã và Đóng thông báo. Gỡ lấy chi tiết, nhập tay, trình duyệt, OTP và Playwright khỏi app/EXE. Sửa IMAP: phân biệt lỗi đăng nhập thật với mất kết nối, tự thử lại giữ UID; bỏ thư đã xóa khỏi danh sách thử lại; dừng socket cũ nhanh, không báo lỗi giả khi logout. Giữ tài khoản, lịch sử, âm thanh năm nguồn và giờ yên lặng. Agoda, Expedia, Traveloka, Trip giữ popup/Excel/in như cũ. Đã kiểm thử popup thật, chống trùng và OTA." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Quét email booking mỗi 15 giây mặc định, giữ kết nối IMAP và ưu tiên thư mới, gồm Trip.com. Giãn thử lại thư lỗi và nhường lượt quét tiếp theo khi phần bổ sung dữ liệu cũ kéo dài. Cấu hình quét chậm từ bản cũ tự chuyển về 15 giây. Vẫn chỉ báo xác nhận mới có check-in hôm nay; giữ giờ yên lặng, lịch sử và chống báo trùng." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

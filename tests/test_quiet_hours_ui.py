@@ -64,7 +64,7 @@ def _app(tmp_path):
         setattr(app, name, None)
     fields = {
         "provider_var": "Gmail", "host_var": "imap.gmail.com", "port_var": "993",
-        "email_var": "", "password_var": "", "poll_var": "60", "scan_days_var": "90",
+        "email_var": "", "password_var": "", "poll_var": str(DEFAULT_CONFIG["poll_seconds"]), "scan_days_var": "90",
         "sound_var": "",
         "quiet_var": True, "quiet_start_hour_var": "22", "quiet_start_minute_var": "30",
         "quiet_end_hour_var": "06", "quiet_end_minute_var": "15", "quiet_feedback_var": "",
@@ -264,7 +264,8 @@ def test_collect_rejects_invalid_or_equal_ranges_without_mutating_saved_config(
 
 def test_collect_and_independent_quiet_save_canonical_pair_preserve_other_settings_without_restart(tmp_path, monkeypatch):
     app = _app(tmp_path)
-    app.config.update(quiet_hours_enabled=False, poll_seconds=120, sound_file="preserve-user-sound.wav")
+    app.config.update(quiet_hours_enabled=False, poll_seconds=25, sound_file="preserve-user-sound.wav")
+    app.poll_var.set("25")
     app.config_store.save(app.config)
     saved = app.config_store.load()
     app.quiet_var.set(True)
@@ -329,7 +330,7 @@ def test_native_four_quiet_time_pickers_toggle_independent_save_reload_and_equal
     store.save({"email_address": "", "password_encrypted": "", "quiet_hours_enabled": False,
                 "quiet_start_time": "00:00", "quiet_end_time": "08:00", "f92_enabled": False,
                 "start_with_windows": False, "start_minimized": False, "update_manifest_source": "",
-                "sound_file": "preserve-user-sound.wav", "poll_seconds": 120})
+                "sound_file": "preserve-user-sound.wav", "poll_seconds": 25})
     state = StateStore(tmp_path / "state.json")
     monkeypatch.setattr(desktop, "APP_DIR", tmp_path)
     monkeypatch.setattr(desktop, "ConfigStore", lambda: store)

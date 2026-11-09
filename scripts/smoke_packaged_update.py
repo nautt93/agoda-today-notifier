@@ -53,7 +53,7 @@ def prepare_profile(config_dir: Path, marked: bool, current: bool = False) -> tu
         config.update({
             "source_sound_pack": "hotel-mp3-v1", "trip_sound_pack": "", "trip_sound_file": "",
             "email_address": "ota-smoke@example.invalid", "password_encrypted": "synthetic-not-a-real-credential",
-            "imap_host": "", "poll_seconds": 90, "scan_days": 90, "f92_port": "COM8",
+            "imap_host": "", "poll_seconds": 900, "scan_days": 90, "f92_port": "COM8",
         })  # No host means the synthetic credentials never trigger a network connection.
         sources = ("agoda", "expedia", "traveloka", "common", "trip") if current else ("agoda", "expedia", "traveloka", "common")
         for source, frequency in zip(sources, (220, 330, 440, 550, 660)[:len(sources)], strict=True):
@@ -152,7 +152,8 @@ def exercise_upgrade(project: Path, asset: Path, expected: str, launcher: Path, 
                 if marked:
                     retired = {"booking_com_enrichment", "booking_com_enrichment_mode", "booking_com_browser"}
                     assert retired.isdisjoint(installed_config), f"{label}: retired browser settings returned"
-                    changed = {"booking_com_sound_file", "booking_com_sound_pack", *retired}
+                    assert installed_config["poll_seconds"] == 15, f"{label}: old long scan interval was not upgraded"
+                    changed = {"booking_com_sound_file", "booking_com_sound_pack", "poll_seconds", *retired}
                     if not current:
                         changed.update({"trip_sound_pack", "trip_sound_file"})
                     for key, value in original_config.items():

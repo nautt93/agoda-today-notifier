@@ -40,7 +40,7 @@ def test_new_sound_pack_replaces_old_choices_once_without_changing_credentials(t
     store = ConfigStore(tmp_path / "config.json")
     store.save({"email_address": "hotel@example.invalid", "password_encrypted": "unchanged-encrypted-secret",
                 "agoda_sound_file": "old-agoda.wav", "expedia_sound_file": "old-expedia.wav",
-                "sound_file": "old-common.mp3", "f92_port": "COM6", "poll_seconds": 90})
+                "sound_file": "old-common.mp3", "f92_port": "COM6", "poll_seconds": 25})
     previous = store.load()
     installed = store.install_source_sound_pack(tmp_path / "sounds")
     assert installed["source_sound_pack"] == SOURCE_SOUND_PACK

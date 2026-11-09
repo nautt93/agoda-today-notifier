@@ -29,7 +29,7 @@ def test_legacy_configuration_missing_time_keys_retains_toggle_and_all_other_set
         "email_address": "hotel@example.invalid", "password_encrypted": "synthetic-encrypted-secret",
         "quiet_hours_enabled": enabled, "agoda_sound_file": "custom-agoda.mp3",
         "booking_com_sound_file": "custom-booking.wav", "booking_com_browser": "chrome",
-        "booking_com_enrichment": False, "poll_seconds": 90, "f92_port": "COM8",
+        "booking_com_enrichment": False, "poll_seconds": 25, "f92_port": "COM8",
         "update_manifest_source": "https://example.invalid/update.json", "retired_unknown_key": "drop",
     }
     atomic_json_write(store.path, original)
