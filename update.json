@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.28",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.28/Booking-Checkin-Hom-Nay-1.7.28.exe",
-  "sha256": "6429902df80fa85ce9ca1a398f61698ba7a5f9a40a53c13629aab06566aad947",
-  "size": 25080341,
-  "notes": "Booking.com chỉ báo mã đặt phòng check-in hôm nay, popup gọn với hai nút Sao chép mã và Đóng thông báo. Gỡ lấy chi tiết, nhập tay, trình duyệt, OTP và Playwright khỏi app/EXE. Sửa IMAP: phân biệt lỗi đăng nhập thật với mất kết nối, tự thử lại giữ UID; bỏ thư đã xóa khỏi danh sách thử lại; dừng socket cũ nhanh, không báo lỗi giả khi logout. Giữ tài khoản, lịch sử, âm thanh năm nguồn và giờ yên lặng. Agoda, Expedia, Traveloka, Trip giữ popup/Excel/in như cũ. Đã kiểm thử popup thật, chống trùng và OTA.",
-  "signature": "KT2JcRYHSYCJXZnB4U10QTqR6votCnBzp3rxotaBsKmlFJL1xMyJpr2wuknawUA3v4rh+Q/rgjl0ZP0+F2ghAQ=="
+  "version": "1.7.30",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.30/Booking-Checkin-Hom-Nay-1.7.30.exe",
+  "sha256": "eb088f5640c39038d307f7723108da440a37d42a072490f4cdefdec2f29b7fd2",
+  "size": 25517540,
+  "notes": "Quét email booking mỗi 15 giây mặc định, giữ kết nối IMAP và ưu tiên thư mới, gồm Trip.com. Giãn thử lại thư lỗi và nhường lượt quét tiếp theo khi phần bổ sung dữ liệu cũ kéo dài. Cấu hình quét chậm từ bản cũ tự chuyển về 15 giây. Vẫn chỉ báo xác nhận mới có check-in hôm nay; giữ giờ yên lặng, lịch sử và chống báo trùng.",
+  "signature": "aLEED5EkveC1OWj/wSWLGMEpp+WV+9FEtcRg/UOSb3C7knFrq2GHUzhslArrK4KqzDEvW2ZP7ZLspZKKzEBHCQ=="
 }
