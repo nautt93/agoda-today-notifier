@@ -51,7 +51,7 @@
 
 ## Cài đặt
 
-### Quét email nhanh — từ v1.7.29
+### Quét email nhanh — từ v1.7.30
 
 Ứng dụng kiểm tra thư mới trong Inbox mỗi **15 giây** theo mặc định, dùng lại kết nối IMAP đang hoạt động. Trong **Cài đặt → Cấu hình → Kết nối email** có thể chọn từ 10 đến 30 giây. Giá trị cũ trên 30 giây tự chuyển về 15 giây khi cập nhật.
 

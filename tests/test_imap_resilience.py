@@ -331,6 +331,14 @@ def test_worker_picks_up_mail_after_initial_empty_search_on_same_tls_session(tmp
     monkeypatch.setattr(mail_monitor.ssl, "create_default_context", lambda: context)
     monkeypatch.setattr(mail_monitor, "normalize_poll_seconds", lambda _seconds: 0.2)
     monitor, state, events = make_monitor(tmp_path, imap_host="127.0.0.1", imap_port=port)
+    emit = monitor.emit
+
+    def stop_after_alert(kind, value):
+        emit(kind, value)
+        if kind == "alert":
+            monitor.stop()  # Stop in the worker before it can issue another IMAP command.
+
+    monkeypatch.setattr(monitor, "emit", stop_after_alert)
     monitor.start()
     try:
         deadline = time.monotonic() + 5
@@ -344,7 +352,10 @@ def test_worker_picks_up_mail_after_initial_empty_search_on_same_tls_session(tmp
         monitor.stop()
         monitor.join(2)
     assert not monitor.is_alive(), _worker_diagnostic(monitor)
-    assert not failures and commands.count(b"LOGIN") == 1 and commands.count(b"EXAMINE") >= 2
+    assert commands.count(b"LOGIN") == 1 and commands.count(b"EXAMINE") == 2
+    # Windows may report a reset to the peer instead of EOF on intentional
+    # shutdown. The complete FETCH already produced the expected alert above.
+    assert all(getattr(error, "winerror", None) in {10053, 10054} for error in failures), failures
     assert len(StateStore(state.path).pending_for_date(date.today())) == 1
 
 
