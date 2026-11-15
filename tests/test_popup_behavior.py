@@ -102,6 +102,7 @@ def test_email_repair_updates_other_sources_same_popup_without_replaying_sound(s
     assert excel_tsv(original) == excel_tsv(saved)
     instance.active_guest_var.set.assert_called_once_with(saved.guest_name)
     instance.active_room_var.set.assert_called_once_with(saved.room_type)
+    instance.active_revenue_var.set.assert_called_once_with("VND 800,000.00")
     instance.f92_worker.notify.assert_called_once_with(original, play_sound=False)
     instance.play_sound.assert_not_called()
     instance.stop_sound.assert_not_called()

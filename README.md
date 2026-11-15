@@ -51,6 +51,14 @@
 
 ## Cài đặt
 
+### Định dạng Tổng thu và phiếu Traveloka — từ v1.7.31
+
+Bảng booking và popup dùng chung định dạng tiền tệ, ví dụ `VND 378,675.00`. Các giá trị cũ như `VND378675`, `378.675 đ` hoặc `378,675 VND` hiển thị thống nhất ngay, không sửa khoản thu đã lưu hoặc thay đổi 9 cột sao chép Excel.
+
+Khi bấm **In phiếu Traveloka**, app tìm lại email booking và email **PAYMENT SENT - Booking ID ...** hoặc **PAYMENT COMPLETED** khớp mã/ngày lưu trú. Thư payment gửi sau booking có tên khách viết hoa vẫn được đối chiếu với tên trên email booking. Phiếu giữ đủ số thẻ, CVC, hạn thẻ, giá trị VCC và toàn bộ thời gian `VCC can only be used on ... until ...`, kể cả múi giờ. Tên khách, mã ở tiêu đề/nội dung hoặc ngày lưu trú mâu thuẫn sẽ không được ghép thẻ. Không ghép thẻ chỉ dựa vào tên khách vì nhiều booking có thể trùng tên.
+
+`PAYMENT SENT` là thông báo tạo thẻ, không có nghĩa khách sạn đã thu thẻ; `PAYMENT COMPLETED` cũng chỉ được đánh dấu đã thu khi nội dung xác nhận rõ trạng thái đó. Các email payment không tạo cảnh báo booking mới. Nếu mở phiếu trước khi payment đến, bấm **In phiếu** lại sau khi nhận email để đọc thư mới và cập nhật thẻ. Dữ liệu thẻ chỉ nằm trong bộ nhớ trong lúc xem/in.
+
 ### Quét email nhanh — từ v1.7.30
 
 Ứng dụng kiểm tra thư mới trong Inbox mỗi **15 giây** theo mặc định, dùng lại kết nối IMAP đang hoạt động. Trong **Cài đặt → Cấu hình → Kết nối email** có thể chọn từ 10 đến 30 giây. Giá trị cũ trên 30 giây tự chuyển về 15 giây khi cập nhật.

@@ -54,6 +54,51 @@ def expected(*, identifier: str = IDENTIFIER, checkin: date = date(2026, 10, 4))
                         room_type="Deluxe Double - ROOM ONLY x2", total_revenue="VND 800,000")
 
 
+def sent_payment(*, plain: bool = False) -> EmailMessage:
+    source = (FIXTURES / "traveloka_payment_sent.html").read_text(encoding="utf-8")
+    message = receipt(html=source, sender="Traveloka <no-reply@traveloka.com>", plain=plain)
+    message.replace_header("Subject", f"PAYMENT SENT - Booking ID {IDENTIFIER}(Test Hotel, VIETNAM)")
+    message["Date"] = "Sun, 04 Oct 2026 04:42:46 +0000"
+    return message
+
+
+@pytest.mark.parametrize("plain", [False, True])
+def test_payment_sent_adds_matching_vcc_and_full_activation_window_without_marking_charged(plain):
+    no_card = (FIXTURES / "traveloka_confirmation.html").read_text(encoding="utf-8")
+    data = parse_traveloka_print(confirmation(no_card), expected(), [sent_payment(plain=plain)])
+    assert len(data.cards) == 1 and data.fields["payment_id"] == "PAYMENT-SENT-00001"
+    assert data.fields["receipt_total"] == "VND 800,000.00"
+    card = data.cards[0].fields
+    assert card["pan"] == "4111111111111111" and card["cvv"] == "000" and card["expiry"] == "11/28"
+    assert card["amount"] == "VND 800,000.00"
+    assert card["activation"] == "6 Oct 2026 07:00 GMT +07:00 until 4 Jan 2027 07:00 GMT +07:00"
+    assert data.fields["payment_status"] == "VCC payment is created"
+    assert "payment_completed" not in data.fields and "completed" not in card
+    assert not any(card["pan"] in str(value) for value in data.booking.to_dict().values())
+
+
+@pytest.mark.parametrize("conflict", ["booking-id", "checkout", "guest", "subject-id"])
+def test_payment_sent_never_attaches_card_with_conflicting_booking_identity(conflict):
+    message = sent_payment()
+    source = message.get_content()
+    if conflict == "booking-id":
+        source = source.replace(IDENTIFIER, "20261234000099")
+        message.replace_header("Subject", "PAYMENT SENT - Booking ID 20261234000099")
+    elif conflict == "checkout":
+        source = source.replace("6 Oct 2026</div>", "8 Oct 2026</div>")
+    elif conflict == "guest":
+        source = source.replace("LINH TRẦN", "OTHER GUEST")
+    else:
+        message.replace_header("Subject", "PAYMENT SENT - Booking ID 20261234000099")
+    message.set_content(source, subtype="html")
+    if conflict in {"guest", "subject-id"}:
+        with pytest.raises(TravelokaPrintError, match="không khớp|không thống nhất"):
+            parse_traveloka_print(confirmation(), expected(), [message])
+    else:
+        no_card = (FIXTURES / "traveloka_confirmation.html").read_text(encoding="utf-8")
+        assert not parse_traveloka_print(confirmation(no_card), expected(), [message]).cards
+
+
 def test_traveloka_print_has_full_guest_room_rate_contact_payment_and_transient_card_fields():
     data = parse_traveloka_print(confirmation(), expected())
     assert data.booking.guest_name == "Linh Trần"
@@ -349,6 +394,20 @@ def test_traveloka_fetch_reads_one_exact_id_search_then_joins_late_receipt_read_
     assert client.uid.call_args_list[0].args == ("search", None, "TEXT", f'"{IDENTIFIER}"')
     assert [call.args[1] for call in client.uid.call_args_list[1:]] == [b"3", b"2", b"1"]
     assert all(call.args[2] == "(BODY.PEEK[])" for call in client.uid.call_args_list[1:])
+
+
+def test_traveloka_fetch_finds_payment_sent_on_next_print_and_keeps_booking_unchanged(monkeypatch):
+    no_card = (FIXTURES / "traveloka_confirmation.html").read_text(encoding="utf-8")
+    selected = expected()
+    before = selected.to_dict()
+    mock_imap(monkeypatch, [confirmation(no_card)], ids=b"1")
+    assert not fetch_traveloka_print(CONFIG, "test-secret", selected).cards
+    client = mock_imap(monkeypatch, [sent_payment(), confirmation(no_card)], ids=b"1 2")
+    data = fetch_traveloka_print(CONFIG, "test-secret", selected)
+    assert len(data.cards) == 1 and data.cards[0].fields["pan"] == "4111111111111111"
+    assert data.booking.booking_id == selected.booking_id and selected.to_dict() == before
+    assert client.uid.call_args_list[0].args == ("search", None, "TEXT", f'"{IDENTIFIER}"')
+    assert [call.args[1] for call in client.uid.call_args_list[1:]] == [b"2", b"1"]
 
 
 def test_traveloka_fetch_caps_downloads_at_six_even_with_many_matching_server_results(monkeypatch):

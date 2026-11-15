@@ -98,6 +98,8 @@ def test_traveloka_popup_print_context_transient_preview_and_tray_are_independen
                         f"{Path(__file__).resolve()}::test_traveloka_popup_print_context_transient_preview_and_tray_are_independent"],
                        env={**os.environ, "BOOKING_TRAVELOKA_PRINT_UI_CHILD": "1"}, check=True, timeout=90)
         return
+    from test_traveloka_print import FIXTURES, confirmation, expected, sent_payment
+
     from booking_notifier.config import ConfigStore
     from booking_notifier.expedia_print import render_booking_a4
     from booking_notifier.traveloka_print import parse_traveloka_print
@@ -109,7 +111,9 @@ def test_traveloka_popup_print_context_transient_preview_and_tray_are_independen
     monkeypatch.setattr(desktop, "ConfigStore", lambda: store)
     monkeypatch.setattr(desktop, "StateStore", lambda: state)
     monkeypatch.setattr(BookingNotifierApp, "play_sound", lambda self: setattr(self, "sound_active", True))
-    data = parse_traveloka_print(sample_print_message())
+    no_card = (FIXTURES / "traveloka_confirmation.html").read_text(encoding="utf-8")
+    data = parse_traveloka_print(confirmation(no_card), expected(), [sent_payment()])
+    assert len(data.cards) == 1 and data.cards[0].fields["activation"]
     data.booking.checkin_date = date.today()
     data.booking.checkout_date = date.today() + timedelta(days=2)
     root = tk.Tk()
@@ -130,6 +134,7 @@ def test_traveloka_popup_print_context_transient_preview_and_tray_are_independen
         root.update()
         popup = app.active_popup
         assert popup.winfo_viewable() and root.state() == "withdrawn"
+        assert app.active_revenue_var.get() == "VND 800,000.00"
         buttons = [child for child in descendants(popup) if isinstance(child, ttk.Button)]
         print_button = next(button for button in buttons if button.winfo_name() == "print_traveloka")
         assert print_button.cget("text") == "In phiếu Traveloka - 1 trang A4" and print_button.winfo_viewable()
@@ -149,6 +154,7 @@ def test_traveloka_popup_print_context_transient_preview_and_tray_are_independen
         app.restore_main_window()
         root.update()
         row = app.history_tree.get_children()[0]
+        assert app.history_tree.item(row, "values")[-1] == "VND 800,000.00"
         row_y = app.history_tree.bbox(row)[1] + 8
         monkeypatch.setattr(app.history_menu, "tk_popup", Mock())
         monkeypatch.setattr(app.history_menu, "grab_release", Mock())

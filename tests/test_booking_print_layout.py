@@ -98,6 +98,28 @@ def test_traveloka_without_card_explicitly_reports_missing_source_data(monkeypat
         page.close()
 
 
+def test_payment_sent_prints_new_vcc_activation_and_not_a_completed_payment(monkeypatch):
+    from test_traveloka_print import FIXTURES, confirmation, expected, sent_payment
+
+    from booking_notifier.traveloka_print import parse_traveloka_print
+
+    no_card = (FIXTURES / "traveloka_confirmation.html").read_text(encoding="utf-8")
+    data = parse_traveloka_print(confirmation(no_card), expected(), [sent_payment()])
+    captured = record_final_page_text(monkeypatch)
+    page = render_booking_a4(data)
+    try:
+        assert page.size == (2480, 3508) and page.info["body_font_points"] >= 8
+        text = " ".join(line for line, _ in captured[id(page)])
+        assert "Số thẻ: 4111111111111111" in text and "CVV: 000" in text and "Hết hạn: 11/28" in text
+        assert "6 Oct 2026 07:00 GMT +07:00 until 4 Jan 2027 07:00 GMT +07:00" in text
+        assert "VCC payment is created" in text and "PAYMENT-SENT-00001" in text
+        assert "Email không có số thẻ" not in text and "ĐÃ THANH TOÁN" not in text
+        for _, (left, top, right, bottom) in captured[id(page)]:
+            assert 140 <= left < right <= 2335 and 120 <= top < bottom <= 3460
+    finally:
+        page.close()
+
+
 def test_unallocated_traveloka_card_keeps_all_fields_without_invented_room_mapping(monkeypatch):
     data = synthetic_traveloka_print()
     data.cards[0].rooms = []

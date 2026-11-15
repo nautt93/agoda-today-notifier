@@ -17,7 +17,15 @@ from typing import Any
 from .expedia_print import CARD_KEYS, ExpediaPrintData, ExpediaPrintError, PrintCard, PrintRoom, is_explicitly_charged
 from .mail_monitor import _response_bytes
 from .models import BOOKING_STATUS_NEW, BookingEvent
-from .parsing import message_body_text, message_table_rows, normalized, parse_booking_message, parse_date, sender_source
+from .parsing import (
+    is_traveloka_payment_notice,
+    message_body_text,
+    message_table_rows,
+    normalized,
+    parse_booking_message,
+    parse_date,
+    sender_source,
+)
 
 
 class TravelokaPrintError(ExpediaPrintError):
@@ -30,6 +38,7 @@ class _UnmatchedEmail(TravelokaPrintError):
 
 LABELS = {
     "Itinerary ID": "booking_id", "Traveloka Itinerary ID": "booking_id", "Reservation ID": "booking_id",
+    "Booking ID": "booking_id",
     "Guest Name": "guest", "Guest Email": "email", "Customer Email": "email",
     "Guest Phone": "phone", "Guest Telephone": "phone", "Customer Phone": "phone",
     "Check-in": "checkin", "Check-out": "checkout", "Booking Time": "booked", "Booked on": "booked",
@@ -121,7 +130,7 @@ def _trusted(message: Message) -> bool:
 
 
 def _is_receipt(message: Message) -> bool:
-    return bool(re.search(r"\bpayment\s+completed\b", normalized(message.get("Subject", ""))))
+    return is_traveloka_payment_notice(message)
 
 
 def _room_fields(rows: list[list[str]], booking: BookingEvent) -> list[PrintRoom]:
@@ -325,7 +334,7 @@ class _Receipt:
 
 def _payment_receipt(message: Message, expected: BookingEvent | None, room_count: int) -> _Receipt:
     if not _trusted(message) or not _is_receipt(message):
-        raise _UnmatchedEmail("Email không phải thông báo thanh toán hoàn tất của Traveloka.")
+        raise _UnmatchedEmail("Email không phải thông báo thanh toán của Traveloka.")
     rows = _rows(message)
     reservation_starts = [index for index, row in enumerate(rows) if any(
         (item := _cell_field(cell)) and item[0] == "booking_id" for cell in row)]
@@ -344,6 +353,10 @@ def _payment_receipt(message: Message, expected: BookingEvent | None, room_count
     if len(reservations) > 1:
         raise TravelokaPrintError("Email thanh toán gộp nhiều mã đặt phòng. Không ghép nhầm thẻ; hãy kiểm tra email gốc.")
     identifier = selected.get("booking_id", "").upper()
+    subject_id = re.search(r"\b(?:Booking|Itinerary|Reservation)\s+ID\s*[:#-]?\s*([A-Z0-9-]{4,40})\b",
+                           str(message.get("Subject", "")), re.IGNORECASE)
+    if subject_id and subject_id.group(1).upper() != identifier:
+        raise TravelokaPrintError("Mã booking ở tiêu đề và nội dung email payment không thống nhất. Hãy kiểm tra email gốc.")
     checkin = parse_date(selected.get("checkin", ""), "Traveloka")
     checkout = parse_date(selected.get("checkout", ""), "Traveloka")
     if not re.fullmatch(r"[A-Z0-9-]{4,40}", identifier) or not checkin:
@@ -351,6 +364,8 @@ def _payment_receipt(message: Message, expected: BookingEvent | None, room_count
     booking = BookingEvent(source="Traveloka", booking_id=identifier, checkin_date=checkin, checkout_date=checkout,
                            guest_name=selected.get("guest", ""), room_type=selected.get("room", ""))
     _validate_expected(booking, expected)
+    if expected and expected.checkout_date and checkout and expected.checkout_date != checkout:
+        raise _UnmatchedEmail("Ngày trả phòng trong email thanh toán không khớp booking đã chọn.")
     if expected:
         booking = BookingEvent.from_dict(expected.to_dict())
         booking.guest_name = selected.get("guest", "") or booking.guest_name
@@ -368,10 +383,17 @@ def _payment_receipt(message: Message, expected: BookingEvent | None, room_count
     if observed_status and (not status or not _charged(observed_status)):
         status = observed_status
     if not status:
-        # The subject is a receipt category, not proof that a particular VCC was charged.
-        status = "Trạng thái VCC chưa được xác nhận trong email"
+        # PAYMENT SENT creates a VCC; it does not mean the hotel has charged it.
+        status = ("VCC payment is created" if "vcc payment is created" in normalized(body)
+                  else "Trạng thái VCC chưa được xác nhận trong email")
     fields["payment_status"] = status
     cards = _card_blocks(rows, room_count, status)
+    # Traveloka's PAYMENT SENT template supplies an activation window outside
+    # the card grid. Preserve both endpoints and their stated time zone.
+    activation = re.search(r"\bVCC\s+can\s+only\s+be\s+used\s+on\s+([^\r\n]+)", body, re.IGNORECASE)
+    if activation:
+        for card in cards:
+            card.fields.setdefault("activation", _clean(activation.group(1)))
     completed = _charged(status) and all(_charged(card.fields.get("status", "")) for card in cards)
     return _Receipt(booking, fields, cards, completed, selected_rows)
 
@@ -383,6 +405,10 @@ def _merge_receipts(data: ExpediaPrintData, messages: Sequence[Message]) -> None
             receipt = _payment_receipt(message, data.booking, len(data.rooms))
         except _UnmatchedEmail:
             continue
+        actual_name = sorted(re.findall(r"\w+", normalized(receipt.booking.guest_name)))
+        expected_name = sorted(re.findall(r"\w+", normalized(data.booking.guest_name)))
+        if actual_name and expected_name and actual_name != expected_name:
+            raise TravelokaPrintError("Tên khách trong email payment không khớp email booking. Hãy kiểm tra email gốc trước khi in thẻ.")
         receipts.append(receipt)
         for key, value in receipt.fields.items():
             if not value:
@@ -428,7 +454,9 @@ def parse_traveloka_print(message: Message, expected: BookingEvent | None = None
         raise _UnmatchedEmail("Email không phải xác nhận booking mới của Traveloka.")
     _validate_expected(booking, expected)
     rows = _rows(message)
-    fields = {key: value for key, value in _row_fields(rows).items() if key not in PRIVATE_KEYS}
+    # A confirmation's daily rate grid also has a "Total" column. Only a
+    # payment email establishes receipt totals, deposits or payment status.
+    fields = {key: value for key, value in _row_fields(rows).items() if key not in PRIVATE_KEYS | RECEIPT_KEYS}
     fields["guest"] = booking.guest_name
     fields["payable"] = booking.total_revenue
     if not fields.get("hotel"):

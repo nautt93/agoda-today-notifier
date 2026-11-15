@@ -45,6 +45,8 @@ def test_traveloka_confirmation_matches_anonymized_sample_structure():
     "PAYMENT COMPLETED - Payment ID 1779000000000001 (Test Hotel, VIETNAM)",
     "Re: PAYMENT COMPLETED - Payment ID 1779000000000001",
     "Payment received - Traveloka Itinerary ID 20261234000001",
+    "PAYMENT SENT - Booking ID 20261234000001 (Test Hotel, VIETNAM)",
+    "Payment created - Traveloka Itinerary ID 20261234000001",
 ])
 def test_traveloka_payment_receipt_never_alerts_even_when_it_quotes_confirmation(subject):
     assert parse_booking_message(make_message(

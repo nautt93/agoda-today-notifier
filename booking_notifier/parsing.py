@@ -333,7 +333,7 @@ def is_traveloka_payment_notice(message: Message) -> bool:
         len(message.get_all("From", [])) == 1
         and sender_source(message.get("From", "")) == "Traveloka"
         and bool(re.search(
-            r"\bpayment\s+(?:completed|id|received|processed|successful)\b",
+            r"\bpayment\s+(?:sent|created|completed|id|received|processed|successful)\b",
             normalized(message.get("Subject", "")),
         ))
     )

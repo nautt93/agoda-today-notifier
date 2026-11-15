@@ -487,6 +487,7 @@ def test_main_page_only_today_with_settings_and_selected_excel(tmp_path, monkeyp
         items = app.history_tree.get_children()
         assert len(items) == 2
         assert app.history_tree.item(items[0], "values")[2] == "MINH TRẦN"
+        assert app.history_tree.item(items[0], "values")[-1] == "VND 345,487.00"
         x, _, width, _ = app.history_tree.bbox(items[0], "revenue")
         assert x + width <= app.history_tree.winfo_width()
         scrollbars = [child for child in app.history_tree.master.winfo_children() if isinstance(child, ttk.Scrollbar)]

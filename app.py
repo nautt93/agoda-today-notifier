@@ -39,6 +39,7 @@ from booking_notifier.expedia_print import ExpediaPrintError, fetch_expedia_prin
 from booking_notifier.f92_device import F92Worker
 from booking_notifier.mail_monitor import ImapMonitor, friendly_error, test_imap_connection
 from booking_notifier.models import BOOKING_SOURCES, BookingEvent
+from booking_notifier.money import format_revenue
 from booking_notifier.ota_update import (
     check_for_update,
     download_update,
@@ -1223,7 +1224,7 @@ class BookingNotifierApp:
         placeholder = "—"
         self.active_guest_var = tk.StringVar(master=popup, value=alert.guest_name or "Chưa đọc được tên khách")
         self.active_room_var = tk.StringVar(master=popup, value=alert.room_type or placeholder)
-        self.active_revenue_var = tk.StringVar(master=popup, value=alert.total_revenue or placeholder)
+        self.active_revenue_var = tk.StringVar(master=popup, value=format_revenue(alert.total_revenue) or placeholder)
         self.active_checkout_var = tk.StringVar(
             master=popup, value=alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else placeholder,
         )
@@ -1258,7 +1259,7 @@ class BookingNotifierApp:
             ("Check-in", alert.checkin_date.strftime("%d/%m/%Y") if alert.checkin_date else "—"),
             ("Check-out", alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else "—"),
             ("Số đêm", str(alert.nights) if alert.nights is not None else "—"),
-            ("Tổng thu", alert.total_revenue or "—"),
+            ("Tổng thu", format_revenue(alert.total_revenue) or "—"),
         ]
         detail_vars = {
             "Hạng phòng": self.active_room_var, "Tổng thu": self.active_revenue_var,
@@ -1513,7 +1514,7 @@ class BookingNotifierApp:
                 if self.active_room_var is not None:
                     self.active_room_var.set(alert.room_type or placeholder)
                 for variable_name, value in (
-                    ("active_revenue_var", alert.total_revenue or placeholder),
+                    ("active_revenue_var", format_revenue(alert.total_revenue) or placeholder),
                     ("active_checkout_var", alert.checkout_date.strftime("%d/%m/%Y") if alert.checkout_date else placeholder),
                     ("active_nights_var", str(alert.nights) if alert.nights is not None else "—"),
                 ):
@@ -1571,7 +1572,7 @@ class BookingNotifierApp:
             self.history_tree.insert("", "end", iid=str(index), values=(
                 record.get("source", "Agoda"), record.get("booking_id", ""),
                 record.get("guest_name", ""), record.get("room_type", ""),
-                checkin, record.get("total_revenue", ""),
+                checkin, format_revenue(record.get("total_revenue", "")),
             ), tags=("even" if index % 2 == 0 else "odd",))
 
     def show_history_context_menu(self, event: tk.Event) -> str:

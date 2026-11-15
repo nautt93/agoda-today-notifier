@@ -148,9 +148,11 @@ def test_traveloka_first_start_reads_only_latest_twenty_and_incremental_new_uid(
     assert monitor.scan_mailbox() == 0 and fetched == []
 
 
-def test_traveloka_payment_receipt_finishes_once_without_popup_or_infinite_retry(tmp_path, monkeypatch):
+@pytest.mark.parametrize("subject", ["PAYMENT COMPLETED - Payment ID 1779000000000001",
+                                     "PAYMENT SENT - Booking ID 20261234000001"])
+def test_traveloka_payment_receipt_finishes_once_without_popup_or_infinite_retry(tmp_path, monkeypatch, subject):
     message = message_from_bytes(traveloka_email(), policy=policy.default)
-    message.replace_header("Subject", "PAYMENT COMPLETED - Payment ID 1779000000000001")
+    message.replace_header("Subject", subject)
     fetched, _ = fake_inbox(monkeypatch, {1: message.as_bytes()})
     monitor, state, events = make_monitor(tmp_path)
     assert monitor.scan_mailbox() == 1 and fetched == [1]
