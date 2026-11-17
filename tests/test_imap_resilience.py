@@ -429,12 +429,12 @@ def test_stopped_monitor_never_opens_another_connection(tmp_path, monkeypatch):
     assert monitor.scan_mailbox() == 0
 
 
-def test_booking_com_code_only_never_searches_for_missing_guest_or_room(tmp_path):
+def test_booking_com_short_email_never_schedules_an_extra_search_for_missing_details(tmp_path):
     monitor, _, events = make_monitor(tmp_path)
 
     class Client:
         def uid(self, *args):
-            pytest.fail("Code-only Booking.com must not perform detail recovery searches")
+            pytest.fail("Booking.com details are filled by a rich email when it arrives")
 
     record = {"source": "Booking.com", "booking_id": "5741499548", "checkin_date": date.today().isoformat()}
     monitor.state.incomplete_confirmations = lambda today: [record]

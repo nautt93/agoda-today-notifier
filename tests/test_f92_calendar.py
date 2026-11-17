@@ -52,16 +52,16 @@ def test_clock_refresh_does_not_overwrite_booking():
     app.f92_worker.idle.assert_called_once()
 
 
-def test_booking_com_frame_only_shows_code_and_arrival_even_for_legacy_details():
+def test_booking_com_frame_shows_guest_and_room_details_when_email_includes_them():
     basic = {"source": "Booking.com", "booking_id": "12345678901234567890", "checkin_date": date.today()}
     plain = render_booking_image(basic)
-    legacy = render_booking_image({**basic, "guest_name": "OLD FULL NAME", "room_type": "OLD ROOM x2"})
+    detailed = render_booking_image({**basic, "guest_name": "SYNTHETIC FULL NAME", "room_type": "DELUXE ROOM x2"})
     try:
         assert plain.size == (320, 480)
-        assert legacy.tobytes() == plain.tobytes()
+        assert detailed.size == plain.size and detailed.tobytes() != plain.tobytes()
     finally:
         plain.close()
-        legacy.close()
+        detailed.close()
 
 
 def test_empty_alert_queue_restores_calendar():

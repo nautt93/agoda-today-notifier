@@ -37,15 +37,14 @@ def popup_app(alert):
     return instance
 
 
-@pytest.mark.parametrize("details", [True, False])
-def test_booking_com_copies_only_code_without_acknowledging_or_stopping_sound(details):
-    alert = event() if details else BookingEvent(source="Booking.com", booking_id="5550000001", checkin_date=date.today())
+def test_booking_com_short_email_copies_excel_with_missing_fields_blank():
+    alert = BookingEvent(source="Booking.com", booking_id="5550000001", checkin_date=date.today())
     instance = popup_app(alert)
     popup = instance.active_popup
     instance.copy_active_alert()
-    instance.root.clipboard_append.assert_called_once_with(alert.booking_id)
-    instance.copy_feedback_var.set.assert_called_once_with("Đã sao chép mã đặt phòng")
-    instance.set_status.assert_called_once_with("Đã sao chép mã đặt phòng")
+    instance.root.clipboard_append.assert_called_once_with(f"\t\t{date.today().day}\t\t\t\t\t\tBooking.com")
+    instance.copy_feedback_var.set.assert_called_once_with("Đã sao chép • Mở Excel và nhấn Ctrl+V")
+    instance.set_status.assert_called_once_with("Đã sao chép booking sang Excel")
     assert instance.active_alert is alert and instance.active_popup is popup and instance.sound_active
     instance.stop_sound.assert_not_called()
     instance.state.acknowledge.assert_not_called()
@@ -53,8 +52,8 @@ def test_booking_com_copies_only_code_without_acknowledging_or_stopping_sound(de
     popup.destroy.assert_not_called()
 
 
-@pytest.mark.parametrize("source", ["Agoda", "Expedia", "Traveloka", "Trip"])
-def test_other_sources_keep_exact_nine_column_copy_and_popup_sound(source):
+@pytest.mark.parametrize("source", ["Agoda", "Expedia", "Traveloka", "Trip", "Booking.com"])
+def test_all_sources_keep_exact_nine_column_copy_and_popup_sound(source):
     alert = event(source)
     instance = popup_app(alert)
     instance.copy_active_alert()
@@ -73,25 +72,15 @@ def test_no_active_booking_does_not_change_clipboard():
     instance.copy_feedback_var.set.assert_not_called()
 
 
-def test_multiple_selected_sources_copy_codes_and_keep_other_excel_rows():
+def test_multiple_selected_sources_copy_uniform_excel_rows():
     instance = popup_app(None)
     booking, agoda = event(), event("Agoda")
     assert instance._copy_alerts_to_clipboard([booking, agoda], "Đã sao chép 2 booking")
-    instance.root.clipboard_append.assert_called_once_with(booking.booking_id + "\r\n" + excel_tsv(agoda))
+    instance.root.clipboard_append.assert_called_once_with(excel_tsv(booking) + "\r\n" + excel_tsv(agoda))
 
 
-def test_retired_details_do_not_repopulate_code_only_popup_or_trigger_f92():
-    original = BookingEvent(source="Booking.com", booking_id="5550000001", checkin_date=date.today())
-    instance = popup_app(original)
-    instance.state.pending_for_date.return_value = [event()]
-    instance._refresh_pending_details()
-    assert not original.guest_name and not original.room_type and original.checkout_date is None
-    instance.active_guest_var.set.assert_not_called()
-    instance.f92_worker.notify.assert_not_called()
-
-
-@pytest.mark.parametrize("source", ["Agoda", "Expedia", "Traveloka", "Trip"])
-def test_email_repair_updates_other_sources_same_popup_without_replaying_sound(source):
+@pytest.mark.parametrize("source", ["Agoda", "Expedia", "Traveloka", "Trip", "Booking.com"])
+def test_email_repair_updates_same_popup_without_replaying_sound(source):
     saved = event(source)
     original = replace(saved, guest_name="", room_type="", checkout_date=None, total_revenue="")
     instance = popup_app(original)

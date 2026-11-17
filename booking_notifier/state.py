@@ -11,7 +11,7 @@ from .config import STATE_PATH, atomic_json_write
 from .models import BOOKING_SOURCES, BOOKING_STATUS_CANCELLED, BOOKING_STATUS_NEW, BookingEvent, booking_storage_id
 
 STATE_SCHEMA = 5
-PARSER_STATE_VERSION = "p14"
+PARSER_STATE_VERSION = "p15"
 
 
 def _now() -> str:
@@ -285,9 +285,10 @@ class StateStore:
         This never creates a booking/popup or applies lifecycle changes. Unseen
         confirmations for other days remain ignored by the new-mail reader.
         """
-        if event.source == "Booking.com" or event.status != BOOKING_STATUS_NEW or event.checkin_date is None:
+        if event.status != BOOKING_STATUS_NEW or event.checkin_date is None:
             return False
         with self.lock:
+            incoming_details = event.to_dict()
             records = [self.data["bookings"].get(event.storage_id, {})]
             records.extend(self.data["history"])
             records.extend(self.data["pending_alerts"])
@@ -296,10 +297,11 @@ class StateStore:
                 if (not record or record.get("checkin_date") != event.checkin_date.isoformat()
                         or self._record_storage_id(record) != event.storage_id):
                     continue
-                for field in ("guest_name", "room_type"):
-                    incoming = str(getattr(event, field)).strip()
+                for field in ("guest_name", "room_type", "checkout_date", "total_revenue"):
+                    incoming = str(incoming_details[field]).strip()
                     current = str(record.get(field, "")).strip()
-                    if incoming and (not current or len(incoming) > len(current)):
+                    more_complete = field in {"guest_name", "room_type"} and len(incoming) > len(current)
+                    if incoming and (not current or more_complete):
                         record[field] = incoming
                         changed = True
             if changed:
@@ -313,6 +315,8 @@ class StateStore:
             records = list(self.data["bookings"].values()) + self.data["history"] + self.data["pending_alerts"]
             candidates: dict[str, dict[str, Any]] = {}
             for record in records:
+                # Short native Booking.com emails often contain only a code.
+                # A rich relay email can fill the record on its own arrival.
                 if (str(record.get("source", "")).lower() == "booking.com"
                         or record.get("checkin_date") != today.isoformat()
                         or record.get("status") in {"cancelled", "modified"}

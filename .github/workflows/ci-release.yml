@@ -104,7 +104,7 @@ jobs:
           $version = "${{ github.ref_name }}".TrimStart('v')
           $asset = "dist/Booking-Checkin-Hom-Nay-$version.exe"
           $url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/Booking-Checkin-Hom-Nay-$version.exe"
-          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Thống nhất Tổng thu giữa các nguồn trên bảng chính và popup theo mẫu VND 378,675.00, giữ nguyên giá trị và format Excel. Phiếu Traveloka đọc thêm email PAYMENT SENT gửi sau booking, ghép đúng mã, tên khách và ngày lưu trú; in đủ số thẻ, CVC, hạn thẻ, giá trị VCC và khung giờ được phép thu. PAYMENT SENT không được coi là thẻ đã thu và không tạo popup booking trùng. Giữ tốc độ quét 15 giây, tài khoản, lịch sử và âm thanh." --output dist/update.json
+          python scripts/make_release_manifest.py --version $version --asset $asset --url $url --notes "Booking.com đọc thêm xác nhận do Exely gửi, gồm mã booking, tên khách, hạng và số lượng phòng, ngày đến/đi và tổng tiền trong email. Dùng chung popup, bảng, âm riêng, F92 và định dạng sao chép Excel 9 cột. Chỉ báo booking mới check-in hôm nay; thư Booking.com và Exely cùng mã không báo trùng. Đọc trực tiếp từ Inbox, không cần trình duyệt hay OTP." --output dist/update.json
       - name: Publish GitHub Release
         shell: pwsh
         env:

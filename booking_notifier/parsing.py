@@ -25,6 +25,7 @@ TRUSTED_DOMAINS = {
     "Trip": ("trip.com",),
     "Booking.com": ("booking.com",),
 }
+EXELY_BOOKING_RELAY = "noreply@sender.exely.com"
 
 CHECKIN_LABELS = (
     "check-in date", "check in date", "check-in", "check in", "arrival date",
@@ -155,6 +156,10 @@ MONTHS = {
     "july": 7, "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
     "oct": 10, "october": 10, "nov": 11, "november": 11, "dec": 12,
     "december": 12,
+}
+VIETNAMESE_MONTHS = {
+    "mot": 1, "hai": 2, "ba": 3, "tu": 4, "bon": 4, "nam": 5, "sau": 6,
+    "bay": 7, "tam": 8, "chin": 9, "muoi": 10, "muoi mot": 11, "muoi hai": 12,
 }
 
 
@@ -302,7 +307,7 @@ def message_table_rows(message: Message) -> list[list[str]]:
     return rows
 
 
-def sender_source(sender: str) -> str:
+def _sender_mailbox(sender: str) -> str:
     # parseaddr() can accept the first address in a malformed/ambiguous header on
     # older Python versions. The From header must identify one actual mailbox;
     # an address appearing in a display name never grants provider trust.
@@ -319,9 +324,22 @@ def sender_source(sender: str) -> str:
         mailbox = header.addresses[0]
         if not mailbox.username or not mailbox.domain:
             return ""
-        domain = mailbox.domain.lower()
+        return mailbox.addr_spec.lower()
     except (ValueError, IndexError, TypeError):
         return ""
+
+
+def is_exely_booking_relay(sender: str) -> bool:
+    return _sender_mailbox(sender) == EXELY_BOOKING_RELAY
+
+
+def sender_source(sender: str) -> str:
+    address = _sender_mailbox(sender)
+    if address == EXELY_BOOKING_RELAY:
+        # Route this exact mailbox to the Booking.com parser, which still
+        # requires both the Booking.com subject and agency in the body.
+        return "Booking.com"
+    domain = address.rpartition("@")[2]
     for source, roots in TRUSTED_DOMAINS.items():
         if any(domain == root or domain.endswith("." + root) for root in roots):
             return source
@@ -478,9 +496,11 @@ def parse_date(value: str, source: str = "") -> date | None:
         else:
             day, month = first, second
         return _safe_date(year, month, day)
-    match = re.search(r"\b(\d{1,2})\s+thang\s+(\d{1,2})(?:\s+nam)?\s+(20\d{2})\b", raw)
+    month_names_vi = "|".join(VIETNAMESE_MONTHS)
+    match = re.search(rf"\b(\d{{1,2}})\s+thang\s+(\d{{1,2}}|{month_names_vi})[, ]+(?:nam\s+)?(20\d{{2}})\b", raw)
     if match:
-        return _safe_date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        day, month, year = match.groups()
+        return _safe_date(int(year), int(month) if month.isdigit() else VIETNAMESE_MONTHS[month], int(day))
     # This numeric, space-separated date was supported by the original Agoda reader.
     match = re.search(r"\b(\d{1,2})\s+(?:thang\s+)?(\d{1,2})\s*,?\s*(20\d{2})\b", raw)
     if match:
@@ -537,7 +557,7 @@ def _date_by_labels(text: str, rows: Sequence[Sequence[str]], labels: Sequence[s
         # A flattened body may put checkout on the same line. Never let its date
         # be parsed as checkin when the arrival uses a different numeric format.
         candidate = re.split(
-            r"\b(?:check\s*[-]?\s*(?:in|out)|arrival|departure|ngay\s*(?:nhan\s*phong|tra\s*phong|den|di))\b",
+            r"\b(?:check\s*[-]?\s*(?:in|out)|arrival|departure|(?:ngay\s*)?(?:nhan\s*phong|tra\s*phong)|ngay\s*(?:den|di))\b",
             strip_accents(candidate), maxsplit=1, flags=re.IGNORECASE,
         )[0]
         return parse_date(candidate, source)

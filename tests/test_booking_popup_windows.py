@@ -1,4 +1,4 @@
-"""Native Booking.com code popup and the next provider retain their audio routes."""
+"""Native Booking.com and the next provider retain their distinct audio routes."""
 from __future__ import annotations
 
 import os
@@ -69,11 +69,11 @@ def _assert_popup_content_contained(popup):
             assert bounds[2] <= container[2] and bounds[3] <= container[3], f"Content extends outside {label}: {identity}"
 
 
-def test_native_booking_code_copy_close_and_next_source_audio(tmp_path, monkeypatch):
+def test_native_booking_com_details_copy_close_and_next_source_audio(tmp_path, monkeypatch):
     if os.environ.get("BOOKING_POPUP_NATIVE_CHILD") != "1":
         subprocess.run(
             [sys.executable, "-m", "pytest", "-q",
-             f"{Path(__file__).resolve()}::test_native_booking_code_copy_close_and_next_source_audio"],
+             f"{Path(__file__).resolve()}::test_native_booking_com_details_copy_close_and_next_source_audio"],
             env={**os.environ, "BOOKING_POPUP_NATIVE_CHILD": "1"}, check=True, timeout=90,
         )
         return
@@ -103,22 +103,26 @@ def test_native_booking_code_copy_close_and_next_source_audio(tmp_path, monkeypa
         wait_for_tray(instance)
         instance.hide_to_tray()
         root.update()
-        event = BookingEvent(source="Booking.com", booking_id="5550000001", checkin_date=date.today())
+        event = BookingEvent(source="Booking.com", booking_id="5550000001", checkin_date=date.today(),
+                             checkout_date=date.today() + timedelta(days=1), guest_name="SYNTHETIC BOOKING GUEST",
+                             room_type="Deluxe Twin City View x2", total_revenue="420.500 VND")
         instance.enqueue_alert(state.register_today_confirmation(event, ("synthetic-booking",), date.today()))
         root.update()
         popup = instance.active_popup
         copy, close = popup_action_buttons(popup)
         assert popup.winfo_viewable() and root.state() == "withdrawn"
-        assert copy.instate(["!disabled"]) and copy.cget("text") == "Sao chép mã"
+        assert copy.instate(["!disabled"]) and copy.cget("text") == "Sao chép"
         assert instance.sound_active and len(_play_commands(send)) == 1
         opens = [call.args[0] for call in send.call_args_list if call.args[0].startswith("open ")]
         assert len(opens) == 1 and "5-booking-com.mp3" in opens[0]
         assert instance.active_menu.index("end") == 0
-        assert instance.active_menu.entrycget(0, "label") == "Sao chép mã đặt phòng"
+        assert instance.active_menu.entrycget(0, "label") == "Sao chép booking sang Excel"
+        assert instance.active_guest_var.get() == event.guest_name
+        assert instance.active_room_var.get() == event.room_type and instance.active_revenue_var.get() == "VND 420,500.00"
         _assert_popup_content_contained(popup)
-        _screenshot("booking-code-popup-windows.png", popup)
+        _screenshot("booking-com-popup-windows.png", popup)
         copy.invoke()
-        assert root.clipboard_get() == event.booking_id
+        assert root.clipboard_get() == excel_tsv(event)
         assert instance.sound_active and not state.is_acknowledged(event)
 
         following = BookingEvent(
@@ -140,7 +144,7 @@ def test_native_booking_code_copy_close_and_next_source_audio(tmp_path, monkeypa
         next_copy.invoke()
         assert root.clipboard_get() == excel_tsv(following) and len(root.clipboard_get().split("\t")) == 9
         _assert_popup_content_contained(instance.active_popup)
-        _screenshot("agoda-popup-after-booking-code.png", instance.active_popup)
+        _screenshot("agoda-popup-after-booking-com.png", instance.active_popup)
         next_close.invoke()
         root.update()
         assert instance.active_popup is None and not instance.sound_active

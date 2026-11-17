@@ -1,4 +1,4 @@
-"""Native Booking.com code-only notifications need no browser or manual details."""
+"""Native Booking.com email details use the shared desktop notification."""
 from __future__ import annotations
 
 import os
@@ -12,13 +12,16 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from test_booking_com import exely_message
 from test_booking_popup_windows import _assert_popup_content_contained, _screenshot
 from test_ui_smoke import popup_action_buttons
 
 import app as desktop
 from app import BookingNotifierApp
 from booking_notifier.config import ConfigStore
+from booking_notifier.excel_export import excel_tsv
 from booking_notifier.models import BookingEvent
+from booking_notifier.parsing import parse_booking_message
 from booking_notifier.state import StateStore
 
 pytestmark = pytest.mark.skipif(
@@ -27,11 +30,11 @@ pytestmark = pytest.mark.skipif(
 
 
 def _run_isolated(node: str) -> bool:
-    if os.environ.get("BOOKING_CODE_NATIVE_CHILD") == node:
+    if os.environ.get("BOOKING_COM_NATIVE_CHILD") == node:
         return False
     subprocess.run(
         [sys.executable, "-m", "pytest", "-q", f"{Path(__file__).resolve()}::{node}"],
-        env={**os.environ, "BOOKING_CODE_NATIVE_CHILD": node}, check=True, timeout=90,
+        env={**os.environ, "BOOKING_COM_NATIVE_CHILD": node}, check=True, timeout=90,
     )
     return True
 
@@ -40,12 +43,6 @@ def _descendants(widget):
     for child in widget.winfo_children():
         yield child
         yield from _descendants(child)
-
-
-def _widget(parent, name):
-    matching = [widget for widget in _descendants(parent) if widget.winfo_name() == name]
-    assert len(matching) == 1, f"Expected one actual {name} control, found {len(matching)}"
-    return matching[0]
 
 
 def _synthetic_app(tmp_path, monkeypatch, *, legacy=False):
@@ -97,38 +94,41 @@ def _event(booking_id, *, checkin=None, **details):
                         checkin_date=checkin or date.today(), **details)
 
 
-def test_native_code_only_popup_hidden_main_copy_close_and_no_replay(tmp_path, monkeypatch):
-    if _run_isolated("test_native_code_only_popup_hidden_main_copy_close_and_no_replay"):
+def test_native_exely_popup_hidden_main_copy_close_and_no_replay(tmp_path, monkeypatch):
+    if _run_isolated("test_native_exely_popup_hidden_main_copy_close_and_no_replay"):
         return
     instance, state, plays = _synthetic_app(tmp_path, monkeypatch, legacy=True)
     root = instance.root
     try:
-        original = _event("5558000001")
-        pending = state.register_today_confirmation(original, ("synthetic-code",), date.today())
+        original = parse_booking_message(exely_message(date.today()))
+        pending = state.register_today_confirmation(original, ("synthetic-exely",), date.today())
         instance.enqueue_alert(pending)
         root.update()
         popup = instance.active_popup
         copy, close = popup_action_buttons(popup)
         assert popup.winfo_viewable() and root.state() == "withdrawn"
-        assert copy.cget("text") == "Sao chép mã" and copy.instate(["!disabled"])
-        assert _widget(popup, "booking_code").cget("text") == original.booking_id
-        assert date.today().strftime("%d/%m/%Y") in _widget(popup, "booking_arrival").cget("text")
-        assert popup.winfo_height() < 450
+        assert copy.cget("text") == "Sao chép" and copy.instate(["!disabled"])
+        labels = {str(child.cget("text")) for child in _descendants(popup) if isinstance(child, tk.Label)}
+        assert {original.booking_id, date.today().strftime("%d/%m/%Y")} <= labels
+        assert instance.active_guest_var.get() == original.guest_name
+        assert instance.active_room_var.get() == original.room_type
+        assert instance.active_checkout_var.get() == original.checkout_date.strftime("%d/%m/%Y")
+        assert instance.active_revenue_var.get() == "VND 420,500.00" and instance.active_nights_var.get() == "1"
         assert {child.winfo_name() for child in _descendants(popup) if isinstance(child, desktop.ttk.Button)} == {
             "copy_booking", "close_notification",
         }
         assert instance.active_menu.index("end") == 0
-        assert instance.active_menu.entrycget(0, "label") == "Sao chép mã đặt phòng"
+        assert instance.active_menu.entrycget(0, "label") == "Sao chép booking sang Excel"
         assert not root.grab_current()
         _assert_popup_content_contained(popup)
-        _screenshot("booking-code-popup-tray.png", popup)
+        _screenshot("booking-com-popup-tray.png", popup)
         plays.assert_called_once_with("Booking.com")
 
         copy.invoke()
-        assert root.clipboard_get() == original.booking_id
+        assert root.clipboard_get() == excel_tsv(original)
         assert instance.sound_active and not state.is_acknowledged(original)
         instance.active_menu.invoke(0)
-        assert root.clipboard_get() == original.booking_id
+        assert root.clipboard_get() == excel_tsv(original)
         instance.restore_main_window()
         root.update()
         instance.hide_to_tray()
@@ -151,42 +151,43 @@ def test_native_code_only_popup_hidden_main_copy_close_and_no_replay(tmp_path, m
         root.destroy()
 
 
-def test_native_legacy_settings_and_history_offer_only_code_copy(tmp_path, monkeypatch):
-    if _run_isolated("test_native_legacy_settings_and_history_offer_only_code_copy"):
+def test_native_saved_booking_details_show_in_history_and_copy_without_browser_settings(tmp_path, monkeypatch):
+    if _run_isolated("test_native_saved_booking_details_show_in_history_and_copy_without_browser_settings"):
         return
     instance, state, plays = _synthetic_app(tmp_path, monkeypatch, legacy=True)
     root = instance.root
     try:
         original = _event(
-            "5558000002", guest_name="LEGACY DETAILS MUST NOT BE SHOWN",
+            "5558000002", guest_name="SYNTHETIC SAVED GUEST",
             room_type="Legacy room x3", checkout_date=date.today() + timedelta(days=2),
             total_revenue="VND 1.000.000", details_loaded_at="legacy",
         )
         pending = state.register_today_confirmation(original, ("synthetic-legacy",), date.today())
         instance.enqueue_alert(pending)
         root.update()
-        popup = instance.active_popup
-        assert _widget(popup, "booking_code").cget("text") == original.booking_id
-        label_text = " ".join(str(child.cget("text")) for child in _descendants(popup)
-                              if isinstance(child, (tk.Label, desktop.ttk.Label)))
-        assert original.guest_name not in label_text and original.room_type not in label_text
-        popup_action_buttons(popup)[1].invoke()
+        assert instance.active_guest_var.get() == original.guest_name
+        assert instance.active_room_var.get() == original.room_type
+        popup_action_buttons(instance.active_popup)[1].invoke()
         root.update()
         instance.restore_main_window()
         root.update()
         row = instance.history_tree.get_children()[0]
+        assert instance.history_tree.item(row, "values") == (
+            "Booking.com", original.booking_id, original.guest_name, original.room_type,
+            date.today().strftime("%d/%m/%Y"), "VND 1,000,000.00",
+        )
         instance.history_tree.selection_set(row)
         instance.history_tree.focus(row)
         instance.copy_selected_history()
-        assert root.clipboard_get() == original.booking_id
+        assert root.clipboard_get() == excel_tsv(original)
         monkeypatch.setattr(instance.history_menu, "tk_popup", Mock())
         monkeypatch.setattr(instance.history_menu, "grab_release", Mock())
         y = instance.history_tree.bbox(row)[1] + 8
         instance.show_history_context_menu(SimpleNamespace(y=y, x_root=50, y_root=50))
         assert instance.history_menu.index("end") == 0
-        assert instance.history_menu.entrycget(0, "label") == "Sao chép mã đặt phòng"
+        assert instance.history_menu.entrycget(0, "label") == "Sao chép dòng đã chọn sang Excel"
         instance.history_menu.invoke(0)
-        assert root.clipboard_get() == original.booking_id
+        assert root.clipboard_get() == excel_tsv(original)
 
         instance.open_settings()
         root.update()
@@ -204,8 +205,8 @@ def test_native_legacy_settings_and_history_offer_only_code_copy(tmp_path, monke
         root.destroy()
 
 
-def test_native_code_only_quiet_hours_resume_and_today_filter(tmp_path, monkeypatch):
-    if _run_isolated("test_native_code_only_quiet_hours_resume_and_today_filter"):
+def test_native_booking_com_quiet_hours_resume_and_today_filter(tmp_path, monkeypatch):
+    if _run_isolated("test_native_booking_com_quiet_hours_resume_and_today_filter"):
         return
     instance, state, plays = _synthetic_app(tmp_path, monkeypatch)
     root = instance.root
@@ -226,7 +227,7 @@ def test_native_code_only_quiet_hours_resume_and_today_filter(tmp_path, monkeypa
         instance._release_pending_alerts()
         root.update()
         assert instance.active_popup.winfo_viewable() and root.state() == "withdrawn"
-        assert _widget(instance.active_popup, "booking_code").cget("text") == today.booking_id
+        assert instance.active_alert.booking_id == today.booking_id
         plays.assert_called_once_with("Booking.com")
         popup_action_buttons(instance.active_popup)[1].invoke()
         instance._release_pending_alerts()

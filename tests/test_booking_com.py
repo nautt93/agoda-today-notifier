@@ -4,15 +4,37 @@ import json
 from dataclasses import replace
 from datetime import date, timedelta
 from email.message import EmailMessage
+from pathlib import Path
 
 import pytest
 
+from booking_notifier.booking_com import is_booking_com_nonbooking_notice
 from booking_notifier.config import DEFAULT_CONFIG, ConfigStore, atomic_json_write
-from booking_notifier.parsing import parse_booking_message
-from booking_notifier.state import StateStore
+from booking_notifier.excel_export import excel_tsv
+from booking_notifier.models import BookingEvent
+from booking_notifier.money import format_revenue
+from booking_notifier.parsing import html_to_text, parse_booking_message
+from booking_notifier.state import PARSER_STATE_VERSION, StateStore
 
 DETAIL_PATH = "/hotel/hoteladmin/extranet_ng/manage/booking.html"
 IDENTIFIER = "5550000001"
+EXELY_TEMPLATE = Path(__file__).parent / "fixtures" / "booking_com_exely_confirmation.html"
+
+
+def exely_message(day=None, *, html=None, subject=None, sender="Exely <noreply@sender.exely.com>", plain=False):
+    message = EmailMessage()
+    message["From"] = sender
+    message["Subject"] = subject or f"Xác nhận đặt phòng {IDENTIFIER}. Booking.com"
+    message["Date"] = "Tue, 17 Nov 2026 15:37:14 +0700"
+    message["Message-ID"] = "<synthetic-exely-confirmation@example.invalid>"
+    body = EXELY_TEMPLATE.read_text(encoding="utf-8") if html is None else html
+    if day:
+        start, end = day.strftime("%d/%m/%Y"), (day + timedelta(days=1)).strftime("%d/%m/%Y")
+        body = body.replace("18 Tháng Mười Một 2026", start).replace("19 Tháng Mười Một 2026", end)
+    message.set_content(html_to_text(body) if plain else "")
+    if not plain:
+        message.add_alternative(body, subtype="html")
+    return message
 
 
 def booking_message(day=None, subject=None, sender='"Booking.com" <notify@booking.com>', url=None, copy=1):
@@ -44,14 +66,64 @@ def test_short_email_alert_contains_only_code_and_arrival_and_never_keeps_web_to
     assert "synthetic-token" not in saved and "synthetic-session" not in saved and "admin.booking.com" not in saved
 
 
-def test_even_rich_email_does_not_load_guest_room_payment_or_checkout():
+def test_direct_rich_email_supplies_details_without_retaining_card_data():
     message = booking_message()
     message.get_payload(0).set_content(f"Reservation number: {IDENTIFIER}\nCheck-in: {date.today().isoformat()}\n"
                                      f"Check-out: {(date.today() + timedelta(days=3)).isoformat()}\nGuest name: FULL GUEST NAME\n"
                                      "Room type: Deluxe Suite\nRooms: 3\nTotal amount: VND 1,200,000.00\nCard number: 0000 0000 0000 0000")
     event = parse_booking_message(message)
     assert event.booking_id == IDENTIFIER and event.checkin_date == date.today()
-    assert_code_only(event)
+    assert event.guest_name == "FULL GUEST NAME" and event.room_type == "Deluxe Suite x3"
+    assert event.checkout_date == date.today() + timedelta(days=3)
+    assert event.total_revenue == "VND 1,200,000.00" and not event.details_url
+    assert "0000 0000" not in str(event.to_dict())
+
+
+@pytest.mark.parametrize("plain", [False, True])
+def test_exely_confirmation_uses_ota_id_named_vietnamese_dates_full_name_rooms_and_total(plain):
+    event = parse_booking_message(exely_message(plain=plain))
+    assert event.source == "Booking.com" and event.status == "new" and event.booking_id == IDENTIFIER
+    assert (event.checkin_date, event.checkout_date, event.nights) == (date(2026, 11, 18), date(2026, 11, 19), 1)
+    assert event.guest_name == "Lê Minh Anh" and event.room_type == "Deluxe Twin City View x1"
+    assert format_revenue(event.total_revenue) == "VND 420,500.00"
+    assert excel_tsv(event) == "\tLê Minh Anh\t18\t19\t1\t420500\t\t\tBooking.com Deluxe Twin City View x1"
+    assert not any(value in str(event.to_dict()) for value in ("fictional-guest@example.invalid", "synthetic-card-link", "5550000099"))
+
+
+def test_exely_keeps_distinct_room_groups_without_double_counting_detailed_rows():
+    html = EXELY_TEMPLATE.read_text(encoding="utf-8").replace("Phòng<br>1", "Phòng<br>3")
+    html = html.replace("<tr><td>Tổng chi phí", "<tr><td>Số 2: Deluxe Twin City View</td></tr>"
+                        "<tr><td>Số 3: Superior Double</td></tr><tr><td>Tổng chi phí")
+    html = html.replace("<tr><td>Số lượng khách", "<tr><th>№2</th><th>Deluxe Twin City View</th></tr>"
+                        "<tr><th>№3</th><th>Superior Double</th></tr><tr><td>Số lượng khách")
+    assert parse_booking_message(exely_message(html=html)).room_type == "Deluxe Twin City View x2; Superior Double x1"
+
+
+def test_exely_unreported_total_is_not_inferred_from_room_cost_or_commission():
+    html = EXELY_TEMPLATE.read_text(encoding="utf-8").replace("<td>Tổng chi phí</td><td>420.500 VND</td>",
+                                                              "<td>Tổng chi phí</td><td></td>")
+    assert not parse_booking_message(exely_message(html=html)).total_revenue
+
+
+@pytest.mark.parametrize("sender", ["Exely <noreply@sender.exely.com.example.invalid>",
+                                     "Exely <alerts@sender.exely.com>",
+                                     '"noreply@sender.exely.com" <notify@example.invalid>'])
+def test_exely_route_accepts_only_the_relay_mailbox(sender):
+    assert parse_booking_message(exely_message(sender=sender)) is None
+
+
+def test_exely_relay_cannot_turn_another_channel_or_internal_id_into_booking_com():
+    html = EXELY_TEMPLATE.read_text(encoding="utf-8")
+    other_channel = exely_message(subject=f"Xác nhận đặt phòng {IDENTIFIER}. Agoda")
+    assert is_booking_com_nonbooking_notice(other_channel)
+    assert parse_booking_message(other_channel) is None
+    assert parse_booking_message(exely_message(html=html.replace("du lịch: booking.com", "du lịch: booking.com.example.invalid"))) is None
+    assert parse_booking_message(exely_message(html=html.replace(f"Số {IDENTIFIER}", "Số 5550000002"))) is None
+
+
+def test_exely_missing_arrival_does_not_fall_back_to_checkout_or_booking_creation_date():
+    html = EXELY_TEMPLATE.read_text(encoding="utf-8").replace("18 Tháng Mười Một 2026 (2:00 CH)", "")
+    assert parse_booking_message(exely_message(html=html)) is None
 
 
 @pytest.mark.parametrize("sender", ['"Booking.com" <x@booking.com.evil.invalid>', '"notify@booking.com" <x@evil.invalid>',
@@ -158,15 +230,17 @@ def test_code_only_still_rejects_future_confirmation_at_state_boundary(tmp_path)
     assert state.active_bookings() == []
 
 
-def test_legacy_booking_details_do_not_schedule_repair_or_accept_new_enrichment(tmp_path):
+def test_known_short_booking_can_gain_email_details_without_scheduling_searches_or_alerts(tmp_path):
     state = StateStore(tmp_path / "state.json")
     event = parse_booking_message(booking_message())
     state.acknowledge(state.register_today_confirmation(event, ("original",), date.today()))
-    previous = state.path.read_bytes()
-    formerly_rich = replace(event, guest_name="Imported Guest", room_type="Imported Room x2")
-    assert not state.repair_known_confirmation(formerly_rich)
+    richer = parse_booking_message(exely_message(date.today()))
+    assert state.repair_known_confirmation(richer)
+    assert not state.repair_known_confirmation(richer)  # Already repaired.
     assert not state.incomplete_confirmations(date.today())
-    assert state.path.read_bytes() == previous
+    assert not state.pending_for_date(date.today())
+    assert len(state.history()) == 1
+    assert excel_tsv(BookingEvent.from_dict(state.history()[0])) == excel_tsv(richer)
 
 
 def test_configuration_upgrade_removes_advanced_booking_options_preserves_credentials_sound_and_quiet_times(tmp_path):
@@ -233,3 +307,52 @@ def test_monitor_only_latest_twenty_today_confirmation_and_silent_resend(tmp_pat
     assert monitor.scan_mailbox() == 1
     assert len(alerts(events)) == len(state.history()) == 1 and not state.pending_for_date(date.today())
     assert not state.incomplete_confirmations(date.today())
+
+
+@pytest.mark.parametrize("already_closed", [False, True])
+def test_bookings_from_native_and_exely_confirmations_share_one_popup_and_fill_details(tmp_path, monkeypatch, already_closed):
+    from test_trip_monitor import alerts, fake_inbox, monitor_for
+
+    today = date.today()
+    messages = {1: booking_message().as_bytes()}
+    fetched, searches = fake_inbox(monkeypatch, messages)
+    monitor, state, events = monitor_for(tmp_path)
+    assert monitor.scan_mailbox() == 1
+    first = alerts(events)[0]
+    assert_code_only(first)
+    if already_closed:
+        state.acknowledge(first)
+    messages[2] = exely_message(today).as_bytes()
+    assert monitor.scan_mailbox() == 1
+    assert fetched == [1, 2] and searches == [("1:*",), ("UID", "2:*")]
+    assert len(alerts(events)) == 1
+    state = StateStore(state.path)
+    result = BookingEvent.from_dict(state.history()[0]) if already_closed else state.pending_for_date(today)[0]
+    assert result.storage_id == first.storage_id and result.booking_id == IDENTIFIER
+    assert result.guest_name == "Lê Minh Anh" and result.room_type == "Deluxe Twin City View x1"
+    assert result.checkout_date == today + timedelta(days=1) and result.total_revenue == "420.500 VND"
+    assert bool(state.pending_for_date(today)) is not already_closed
+
+
+def test_upgrade_rereads_recent_exely_once_and_only_alerts_today_booking(tmp_path, monkeypatch):
+    from test_trip_monitor import alerts, fake_inbox, monitor_for
+
+    monitor, state, events = monitor_for(tmp_path)
+    # The previously unsupported relay was marked processed as an unrelated sender.
+    key = f"incremental:v1:{monitor.identity_hash}:123"
+    state.stage_mailbox_reads(key, [], minimum_cursor=3, parser_version="p14")
+    for uid in (1, 2, 3):
+        state.remember_processed_aliases(f"uid:p14:{monitor.identity_hash}:123:{uid}")
+    today = date.today()
+    future = exely_message(today + timedelta(days=1))
+    future.replace_header("Message-ID", "<synthetic-exely-future@example.invalid>")
+    unrelated = exely_message(today, subject=f"Xác nhận đặt phòng {IDENTIFIER}. Agoda")
+    unrelated.replace_header("Message-ID", "<synthetic-exely-unrelated@example.invalid>")
+    fetched, searches = fake_inbox(monkeypatch, {1: unrelated.as_bytes(), 2: future.as_bytes(),
+                                               3: exely_message(today).as_bytes()})
+    assert monitor.scan_mailbox() == 3 and fetched == [3, 2, 1]
+    assert [(event.booking_id, event.checkin_date) for event in alerts(events)] == [(IDENTIFIER, today)]
+    assert state.mailbox_read_position(key) == (3, []) and state.mailbox_parser_version(key) == PARSER_STATE_VERSION
+    assert not state.data["parse_failures"]
+    assert monitor.scan_mailbox() == 0 and fetched == [3, 2, 1]
+    assert searches == [("UID", "4:*"), ("1:*",), ("UID", "4:*")]

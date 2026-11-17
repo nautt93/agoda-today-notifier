@@ -1104,11 +1104,6 @@ class BookingNotifierApp:
     def enqueue_alert(self, alert: BookingEvent) -> None:
         if alert.checkin_date != date.today() or alert.status not in {"new", "active"}:
             return
-        if alert.source == "Booking.com":
-            # Old OTA pending records can still contain retired browser data.
-            alert = BookingEvent(source=alert.source, booking_id=alert.booking_id,
-                                 checkin_date=alert.checkin_date, status=alert.status,
-                                 subject=alert.subject, sender=alert.sender, received_at=alert.received_at)
         # The minute tick/startup can show a persisted popup before the IMAP
         # worker emits its alert. Closing that popup must also block the late event.
         if self.state.is_acknowledged(alert):
@@ -1197,10 +1192,6 @@ class BookingNotifierApp:
         popup = tk.Toplevel(self.root)
         self.active_popup = popup
         popup.title(f"{alert.source} • Check-in hôm nay")
-        if alert.source == "Booking.com":
-            self._build_booking_code_popup(popup, alert)
-            self._announce_alert(alert)
-            return
         width, height = 620, 700 if alert.source in {"Expedia", "Traveloka"} else 640
         popup.booking_base_height = height
         x = max(0, (popup.winfo_screenwidth() - width) // 2)
@@ -1325,46 +1316,6 @@ class BookingNotifierApp:
         self._present_alert_popup(popup)
         self._announce_alert(alert)
 
-    def _build_booking_code_popup(self, popup: tk.Toplevel, alert: BookingEvent) -> None:
-        popup.configure(bg=self.COLORS["surface"])
-        popup.resizable(False, False)
-        popup.attributes("-topmost", True)
-        hero = tk.Frame(popup, bg=self.COLORS["primary"], padx=28, pady=22)
-        hero.pack(fill="x")
-        tk.Label(hero, text="BOOKING.COM • KHÁCH ĐẾN HÔM NAY",
-                 bg=self.COLORS["primary"], fg="#BFC9D8", font=("Segoe UI Semibold", 10)).pack(anchor="w")
-        tk.Label(hero, name="booking_code", text=alert.booking_id,
-                 bg=self.COLORS["primary"], fg=self.COLORS["header_text"],
-                 font=("Segoe UI Semibold", 32)).pack(anchor="w", pady=(8, 0))
-        tk.Label(popup, name="booking_arrival", text=f"Check-in hôm nay • {alert.checkin_date:%d/%m/%Y}",
-                 bg=self.COLORS["surface"], fg=self.COLORS["muted"], font=("Segoe UI", 11)).pack(anchor="w", padx=28, pady=(18, 10))
-        self.copy_feedback_var = tk.StringVar(master=popup)
-        tk.Label(popup, textvariable=self.copy_feedback_var, bg=self.COLORS["surface"],
-                 fg=self.COLORS["muted"], font=("Segoe UI", 9)).pack(anchor="w", padx=28, pady=(0, 10))
-        actions = tk.Frame(popup, name="booking_actions", bg=self.COLORS["surface"])
-        actions.pack(fill="x", padx=28, pady=(0, 22))
-        actions.columnconfigure((0, 1), weight=1, uniform="popup_actions")
-        actions.rowconfigure(0, minsize=96)
-        self.active_copy_button = ttk.Button(actions, name="copy_booking", text="Sao chép mã",
-                                            command=self.copy_active_alert, style="Popup.Primary.TButton")
-        self.active_copy_button.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        ttk.Button(actions, name="close_notification", text="Đóng thông báo",
-                   command=self.acknowledge_alert, style="Popup.Secondary.TButton").grid(
-                       row=0, column=1, sticky="nsew", padx=(6, 0))
-        self.active_menu = tk.Menu(popup, tearoff=False)
-        self.active_menu.add_command(label="Sao chép mã đặt phòng", command=self.copy_active_alert)
-        popup.bind("<Button-3>", self.show_active_context_menu)
-        popup.bind("<Button-2>", self.show_active_context_menu)
-        popup.bind("<Control-c>", lambda _event: self.copy_active_alert())
-        popup.protocol("WM_DELETE_WINDOW", self.acknowledge_alert)
-        popup.update_idletasks()
-        button_width = max(child.winfo_reqwidth() for child in actions.winfo_children())
-        width = max(560, popup.winfo_reqwidth(), 2 * button_width + 68)
-        height = max(340, popup.winfo_reqheight())
-        x, y = max(0, (popup.winfo_screenwidth() - width) // 2), max(0, (popup.winfo_screenheight() - height) // 2 - 20)
-        popup.geometry(f"{width}x{height}+{x}+{y}")
-        self._present_alert_popup(popup)
-
     def _announce_alert(self, alert: BookingEvent) -> None:
         self.log(f"POPUP {alert.source} {alert.booking_id or '(không có mã)'}: đã mở thông báo check-in hôm nay.")
         # An audio driver/file error must never dismiss a valid booking notification.
@@ -1488,8 +1439,7 @@ class BookingNotifierApp:
             return
         copied = self._copy_alerts_to_clipboard([self.active_alert], "Đã sao chép booking sang Excel")
         if copied and hasattr(self, "copy_feedback_var"):
-            self.copy_feedback_var.set("Đã sao chép mã đặt phòng" if self.active_alert.source == "Booking.com"
-                                       else "Đã sao chép • Mở Excel và nhấn Ctrl+V")
+            self.copy_feedback_var.set("Đã sao chép • Mở Excel và nhấn Ctrl+V")
 
     def _refresh_pending_details(self) -> None:
         """Update repaired details in-place: preserve the popup, focus and sound."""
@@ -1499,7 +1449,7 @@ class BookingNotifierApp:
             alerts.append(self.active_alert)
         for alert in alerts:
             saved = pending.get(alert.storage_id)
-            if alert.source == "Booking.com" or saved is None or saved.checkin_date != alert.checkin_date:
+            if saved is None or saved.checkin_date != alert.checkin_date:
                 continue
             changed = False
             for field in ("guest_name", "room_type", "total_revenue", "checkout_date", "subject", "sender", "received_at", "details_url", "details_loaded_at"):
@@ -1560,8 +1510,6 @@ class BookingNotifierApp:
         for record in self.state.history():
             if record.get("checkin_date") != self.history_day.isoformat():
                 continue
-            if record.get("source") == "Booking.com":
-                record = {**record, "guest_name": "", "room_type": "", "total_revenue": ""}
             index = len(self.history_rows)
             self.history_rows[str(index)] = dict(record)
             checkin = str(record.get("checkin_date", ""))
@@ -1584,8 +1532,7 @@ class BookingNotifierApp:
         self.history_tree.focus(row_id)
         self.history_menu.delete(0, "end")
         record = self.history_rows.get(row_id)
-        self.history_menu.add_command(label="Sao chép mã đặt phòng" if record and record.get("source") == "Booking.com"
-                                      else "Sao chép dòng đã chọn sang Excel", command=self.copy_selected_history)
+        self.history_menu.add_command(label="Sao chép dòng đã chọn sang Excel", command=self.copy_selected_history)
         if record and record.get("source") in {"Expedia", "Traveloka"}:
             selected = BookingEvent.from_dict(record)
             self.history_menu.add_command(label=f"In phiếu {selected.source} - 1 trang A4",
@@ -1765,10 +1712,9 @@ class BookingNotifierApp:
 
     def _copy_alerts_to_clipboard(self, alerts: list[BookingEvent], status: str) -> bool:
         self.root.clipboard_clear()
-        self.root.clipboard_append("\r\n".join(alert.booking_id if alert.source == "Booking.com" else excel_tsv(alert)
-                                               for alert in alerts))
+        self.root.clipboard_append(excel_tsv_rows(alerts))
         self.root.update_idletasks()
-        self.set_status("Đã sao chép mã đặt phòng" if all(alert.source == "Booking.com" for alert in alerts) else status)
+        self.set_status(status)
         return True
 
     def set_status(self, value: str) -> None:

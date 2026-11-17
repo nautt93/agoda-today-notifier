@@ -74,13 +74,13 @@ Vào **Cài đặt → Cấu hình → Thời gian yên lặng**, bật **Bật 
 - Hết giờ, chỉ báo các booking chờ có check-in **vẫn là hôm nay**, một lần qua hàng đợi cũ; không nhắc lại booking ngày hôm qua sau nửa đêm và không báo trước cho ngày khác. Booking đã đóng/xác nhận không được phát lại. Thoát/khởi động lại/OTA vẫn giữ cặp giờ và booking chờ.
 - Cấu hình từ bản cũ giữ trạng thái bật/tắt và mặc định 00:00–08:00. Cặp giờ lưu không hợp lệ được khôi phục về cặp mặc định; lưu giờ không hợp lệ bị chặn trước khi ghi file, giữ nguyên tài khoản/âm thanh/các cài đặt khác.
 
-### Booking.com — thông báo mã đặt phòng từ v1.7.28
+### Booking.com — chi tiết từ email xác nhận Exely và Booking.com từ v1.7.32
 
-Booking.com dùng email IMAP như các nguồn khác: chỉ xác nhận mới có check-in hôm nay mới báo. Popup hiển thị mã đặt phòng lớn, ngày đến và hai nút **Sao chép mã / Đóng thông báo**. Chuột phải hoặc Ctrl+C sao chép đúng mã, không cần tên khách/phòng/tổng tiền. Đóng thông báo xác nhận đã xử lý và dừng âm; cùng mã và ngày đến không báo lại khi email gửi lại, khởi động lại hoặc OTA.
+App đọc Booking.com qua IMAP, gồm mẫu **Xác nhận đặt phòng [mã]. Booking.com** do Exely gửi có dòng **Đại lý du lịch: Booking.com**. Dùng mã booking của đại lý, không dùng ID nội bộ Exely. App lấy họ tên, hạng phòng, số phòng, ngày đến/đi và tổng tiền ghi trong thư; nếu có khoản khách sạn thực nhận ghi rõ thì dùng khoản đó. Không lấy dòng hoa hồng làm giá phòng hay tự tính khoản thực nhận khi email chỉ ghi tổng chi phí.
 
-Đã gỡ lấy chi tiết qua trình duyệt, đăng nhập/OTP trong app, nhập/dán chi tiết, trạng thái chờ và Playwright/Node khỏi gói EXE. Không cần mở trình duyệt để app báo Booking.com. Âm thanh riêng, giờ yên lặng, khay hệ thống và F92 tiếp tục dùng chung cơ chế thông báo. Bảng lịch sử Booking.com hiển thị nguồn, mã, ngày đến; chuột phải chỉ có **Sao chép mã đặt phòng**. Khi chọn nhiều nguồn, dòng Booking.com sao chép mã, các nguồn còn lại giữ 9 cột Excel.
+Popup, bảng lịch sử và F92 hiển thị chi tiết đọc được; nút **Sao chép** và menu chuột phải xuất 9 cột Excel như các nguồn khác, ghi chú `Booking.com + hạng phòng + số lượng phòng`. App vẫn nhận thư Booking.com ngắn, để trống những trường không có. Không cần mở Extranet, OTP hay bấm liên kết trong thư.
 
-OTA giữ tài khoản email, mật khẩu đã lưu, lịch sử, UID và các âm đã chọn. Các tùy chọn trình duyệt cũ được bỏ khi tải/lưu cấu hình; dữ liệu lịch sử và hồ sơ cũ trên máy không bị xóa. Agoda, Expedia, Traveloka và Trip tiếp tục lấy đầy đủ thông tin từ email, giữ format Excel và tính năng in A4 tương ứng.
+Chỉ báo xác nhận mới có check-in hôm nay. Thư Booking.com và Exely cùng mã chỉ báo một lần; thư đầy đủ đến sau bổ sung vào popup đang mở hoặc lịch sử. Sau cập nhật, app đọc lại tối đa 20 thư gần nhất một lần để nhận mẫu mới, giữ mốc UID, lịch sử, giờ yên lặng và âm báo riêng `5-booking-com.mp3`.
 
 ### Sửa kết nối IMAP từ v1.7.28
 

@@ -1,4 +1,4 @@
-"""The simplified Windows Booking.com alert keeps the supplied MP3 and code copy."""
+"""A short Booking.com email still uses the supplied MP3 and Excel copy."""
 from __future__ import annotations
 
 import hashlib
@@ -18,17 +18,18 @@ import app as desktop
 from app import BookingNotifierApp
 from booking_notifier.audio import BOOKING_COM_SOUND_PACK, SOURCE_SOUND_SHA256, WindowsMciAudioPlayer
 from booking_notifier.config import ConfigStore
+from booking_notifier.excel_export import excel_tsv
 from booking_notifier.models import BookingEvent
 from booking_notifier.state import StateStore
 
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Native Windows Booking.com source MP3/tray/clipboard")
 
 
-def test_native_code_popup_uses_supplied_mp3_and_legacy_settings_do_not_start_browser(tmp_path, monkeypatch):
+def test_native_short_email_uses_supplied_mp3_and_legacy_settings_do_not_start_browser(tmp_path, monkeypatch):
     if os.environ.get("BOOKING_COM_UI_CHILD") != "1":
         subprocess.run(
             [sys.executable, "-m", "pytest", "-q",
-             f"{Path(__file__).resolve()}::test_native_code_popup_uses_supplied_mp3_and_legacy_settings_do_not_start_browser"],
+             f"{Path(__file__).resolve()}::test_native_short_email_uses_supplied_mp3_and_legacy_settings_do_not_start_browser"],
             env={**os.environ, "BOOKING_COM_UI_CHILD": "1"}, check=True, timeout=60,
         )
         return
@@ -66,6 +67,8 @@ def test_native_code_popup_uses_supplied_mp3_and_legacy_settings_do_not_start_br
         popup = instance.active_popup
         copy, close = popup_action_buttons(popup)
         assert popup.winfo_viewable() and root.state() == "withdrawn" and instance.sound_active
+        assert instance.active_guest_var.get() == "Chưa đọc được tên khách"
+        assert instance.active_room_var.get() == instance.active_revenue_var.get() == "—"
         assert instance.sound_uses_file
         sound = Path(instance.config["booking_com_sound_file"])
         assert sound.name == "5-booking-com.mp3"
@@ -77,7 +80,7 @@ def test_native_code_popup_uses_supplied_mp3_and_legacy_settings_do_not_start_br
         beep.assert_not_called()
         assert play.call_args.args == (None, 0)
         copy.invoke()
-        assert root.clipboard_get() == event.booking_id and instance.sound_active
+        assert root.clipboard_get() == excel_tsv(event) and instance.sound_active
         close.invoke()
         root.update()
         assert state.is_acknowledged(event) and instance.active_popup is None and not instance.sound_active
@@ -91,14 +94,14 @@ def test_native_code_popup_uses_supplied_mp3_and_legacy_settings_do_not_start_br
         monkeypatch.setattr(instance.history_menu, "grab_release", Mock())
         instance.show_history_context_menu(SimpleNamespace(y=instance.history_tree.bbox(row)[1] + 8, x_root=50, y_root=50))
         assert instance.history_menu.index("end") == 0
-        assert instance.history_menu.entrycget(0, "label") == "Sao chép mã đặt phòng"
+        assert instance.history_menu.entrycget(0, "label") == "Sao chép dòng đã chọn sang Excel"
         instance.history_menu.invoke(0)
-        assert root.clipboard_get() == event.booking_id
+        assert root.clipboard_get() == excel_tsv(event)
         instance.open_settings()
         root.update()
         assert "Booking.com" in instance.source_sound_entries
         assert not hasattr(instance, "booking_com_worker") and not hasattr(desktop, "BookingComWorker")
         webbrowser.open.assert_not_called()
-        _screenshot("booking-code-settings-windows.png", instance.settings_window)
+        _screenshot("booking-com-settings-windows.png", instance.settings_window)
     finally:
         instance.exit_app()
