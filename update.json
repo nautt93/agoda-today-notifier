@@ -1,9 +1,9 @@
 {
   "schema": 1,
-  "version": "1.7.31",
-  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.31/Booking-Checkin-Hom-Nay-1.7.31.exe",
-  "sha256": "a092c4bf45e6d2d88177490cf3a73de8dec7a6863c79b30c81eb0ed94d160e55",
-  "size": 25518984,
-  "notes": "Thống nhất Tổng thu giữa các nguồn trên bảng chính và popup theo mẫu VND 378,675.00, giữ nguyên giá trị và format Excel. Phiếu Traveloka đọc thêm email PAYMENT SENT gửi sau booking, ghép đúng mã, tên khách và ngày lưu trú; in đủ số thẻ, CVC, hạn thẻ, giá trị VCC và khung giờ được phép thu. PAYMENT SENT không được coi là thẻ đã thu và không tạo popup booking trùng. Giữ tốc độ quét 15 giây, tài khoản, lịch sử và âm thanh.",
-  "signature": "Bu21H2S2FKnnM94OSvPV94X+IX+LNSowZ8H3d0fIpOQVTFuPoXw+E825RfLX0g+zM134S9un3kDnGhHAURIjAQ=="
+  "version": "1.7.32",
+  "url": "https://github.com/nautt93/agoda-today-notifier/releases/download/v1.7.32/Booking-Checkin-Hom-Nay-1.7.32.exe",
+  "sha256": "4f4c8e6c52a55227da5cdf2417960558e24b1e210c5d85e58d3cb1f6c716a21b",
+  "size": 25517868,
+  "notes": "Booking.com đọc thêm xác nhận do Exely gửi, gồm mã booking, tên khách, hạng và số lượng phòng, ngày đến/đi và tổng tiền trong email. Dùng chung popup, bảng, âm riêng, F92 và định dạng sao chép Excel 9 cột. Chỉ báo booking mới check-in hôm nay; thư Booking.com và Exely cùng mã không báo trùng. Đọc trực tiếp từ Inbox, không cần trình duyệt hay OTP.",
+  "signature": "iHZ69KSzhiMqj3nU/3khtrSDNsm766N7nx1fCwJt8GA864clTXtluB6gSluRkDjqGf1d+RKOnKwx5GEVMwEWDA=="
 }
